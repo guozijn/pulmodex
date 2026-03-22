@@ -1,0 +1,35 @@
+# @package _global_
+experiment_name: fp_reduction
+
+model:
+  name: fp_classifier
+  in_ch: 1
+  base_ch: 16
+
+data:
+  patch_size: 32      # 32³ patches for FP classifier
+  batch_size: 8
+  num_workers: 4
+  train_folds: [0, 1, 2, 3, 4, 5, 6, 7]
+  val_folds: [8]
+  test_folds: [9]
+  augment: true
+  hard_neg_ratio: 2.0  # negative:positive ratio for online hard negative mining
+
+loss:
+  name: focal
+  gamma: 2.0
+  alpha: 0.25
+
+trainer:
+  max_epochs: 50
+  lr: 1.0e-4
+  weight_decay: 1.0e-5
+  lr_scheduler: cosine
+  grad_clip: 1.0
+  device: ${oc.env:DEVICE,cuda}
+  log_every_n_steps: 10
+  val_every_n_epochs: 1
+  save_top_k: 3
+  monitor_metric: val_cpm  # threshold tuned after training
+  fp_threshold: 0.5        # updated after tuning on val fold

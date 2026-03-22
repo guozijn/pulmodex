@@ -1,0 +1,13 @@
+# @package _global_
+experiment_name: webapp
+
+webapp:
+  seg_checkpoint: checkpoints/best_hybrid.ckpt
+  fp_checkpoint: checkpoints/best_fp.ckpt
+  fp_threshold: 0.5          # updated after val tuning
+  # Lung window for slice rendering
+  window_level: -600
+  window_width: 1500
+  # Candidate circle colours
+  confident_color: [255, 0, 0]    # red  ≥ fp_threshold
+  uncertain_color: [255, 165, 0]  # orange < fp_threshold

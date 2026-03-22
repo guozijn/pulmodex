@@ -1,0 +1,8 @@
+defaults:
+  - experiment: baseline
+  - _self_
+
+data_dir: data/processed
+output_dir: outputs
+checkpoint_dir: checkpoints
+seed: 42

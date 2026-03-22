@@ -1,0 +1,38 @@
+# @package _global_
+experiment_name: hybrid
+
+model:
+  name: hybrid_net
+  in_ch: 1
+  base_ch: 32
+  swin_depth: 2
+  swin_heads: 8
+  swin_window: 4
+
+data:
+  patch_size: 128
+  batch_size: 1      # larger model, smaller batch
+  num_workers: 4
+  train_folds: [0, 1, 2, 3, 4, 5, 6, 7]
+  val_folds: [8]
+  test_folds: [9]
+  augment: true
+
+loss:
+  name: dice_focal
+  dice_weight: 0.5
+  focal_weight: 0.5
+  gamma: 2.0
+  alpha: 0.25
+
+trainer:
+  max_epochs: 100
+  lr: 5.0e-5
+  weight_decay: 1.0e-5
+  lr_scheduler: cosine
+  grad_clip: 1.0
+  device: ${oc.env:DEVICE,cuda}
+  log_every_n_steps: 10
+  val_every_n_epochs: 1
+  save_top_k: 3
+  monitor_metric: val_cpm
