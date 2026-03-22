@@ -1,9 +1,10 @@
-"""CT slice viewer component.
-
-Uses a simple <img> PNG fallback (Cornerstone.js requires DICOM buffers;
-pre-rendered PNGs from the API are already windowed and annotated).
-The saliency overlay is already baked into the PNG by the renderer.
-"""
+/**
+ * CT slice viewer component.
+ *
+ * Uses a simple <img> PNG fallback (Cornerstone.js requires DICOM buffers;
+ * pre-rendered PNGs from the API are already windowed and annotated).
+ * The saliency overlay is already baked into the PNG by the renderer.
+ */
 import React, { useState, useEffect, useRef } from "react";
 
 export default function Viewer({ sliceUrl, sliceIdx, onSliceChange, saliencyAlpha }) {
