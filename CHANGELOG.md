@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased] — 2026-03-22 (patch)
 
+### Added
+- **Frontend tests**: Vitest + React Testing Library unit tests for all four components (`StatusBanner`, `UploadZone`, `NoduleList`, `Viewer`) and `App`; Playwright E2E tests covering upload flow, status transitions, nodule list, saliency slider, and view tab switching.
+- **GitHub Actions workflow** (`.github/workflows/frontend.yml`): runs unit tests with coverage and E2E tests (Chromium) on every push/PR touching `webapp/`.
+
 ### Fixed
 - **Critical** `src/data/luna16.py`, `lidc.py`: removed double `[::-1]` on `origin` when calling `world_to_voxel` — origin returned by `load_mhd` is already ZYX; extra reversal corrupted all voxel coordinates
 - **Critical** `src/data/preprocessing.py`: `resample_to_isotropic` now sets `SetOutputOrigin` and `SetOutputDirection` on the SimpleITK resampler, preserving physical-space metadata

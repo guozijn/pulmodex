@@ -15,6 +15,7 @@ export default function NoduleList({ candidates, selected, onSelect }) {
         return (
           <div
             key={i}
+            data-testid="nodule-item"
             onClick={() => onSelect(c, i)}
             style={{
               padding: "8px 10px",
