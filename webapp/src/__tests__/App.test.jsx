@@ -28,7 +28,7 @@ describe("App", () => {
   });
 
   it("shows PENDING status and disables the upload zone after submitting a file", async () => {
-    // Prevent the polling interval from running during this test.
+    // Prevent the real 2 s interval from running during this test.
     vi.spyOn(window, "setInterval").mockReturnValue(99);
     vi.spyOn(window, "clearInterval").mockImplementation(() => {});
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce({
@@ -47,15 +47,20 @@ describe("App", () => {
   it(
     "transitions to SUCCESS and shows saliency control when polling resolves",
     async () => {
-      // Let the real setInterval fire; the first tick lands at ~2 s.
-      vi.stubGlobal("fetch", vi.fn()
-        // POST /predict
-        .mockResolvedValueOnce({ ok: true, json: async () => ({ job_id: "job-2", seriesuid: "series-2" }) })
-        // GET /status → SUCCESS
-        .mockResolvedValueOnce({ ok: true, json: async () => ({ state: "SUCCESS", result: {} }) })
-        // GET /report
-        .mockResolvedValueOnce({ ok: true, json: async () => ({ top_candidates: [] }) }),
-      );
+      // NOTE: vi.useFakeTimers() deadlocks in React 18 + jsdom because
+      // advanceTimersByTimeAsync cannot resolve chained async Promises while
+      // React's scheduler is also waiting on the same fake clock. Manually
+      // invoking the captured setInterval callback bypasses React's internal
+      // scheduler, so setState updates are never committed. The real-timer
+      // approach is the only reliable method here: the first poll fires after
+      // ~2 s and waitFor catches the resulting state update normally.
+      vi.stubGlobal("fetch", vi.fn().mockImplementation((url) => {
+        if (url.includes("/predict"))
+          return Promise.resolve({ ok: true, json: () => Promise.resolve({ job_id: "job-2", seriesuid: "series-2" }) });
+        if (url.includes("/status"))
+          return Promise.resolve({ ok: true, json: () => Promise.resolve({ state: "SUCCESS", result: {} }) });
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ top_candidates: [] }) });
+      }));
 
       render(<App />);
       const input = document.querySelector("input[type='file']");
@@ -67,6 +72,6 @@ describe("App", () => {
       );
       expect(screen.getByText(/Saliency opacity/)).toBeInTheDocument();
     },
-    6000, // extend Jest/Vitest test timeout to 6 s
+    6000,
   );
 });

@@ -35,7 +35,8 @@ describe("NoduleList", () => {
   it("calls onSelect with the candidate and index when clicked", async () => {
     const onSelect = vi.fn();
     render(<NoduleList candidates={CANDIDATES} selected={null} onSelect={onSelect} />);
-    await userEvent.click(screen.getByText("Nodule 2").closest("div[style]"));
+    const rows = screen.getAllByTestId("nodule-item");
+    await userEvent.click(rows[1]);
     expect(onSelect).toHaveBeenCalledWith(CANDIDATES[1], 1);
   });
 

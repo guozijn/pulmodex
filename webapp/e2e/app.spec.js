@@ -174,8 +174,9 @@ test.describe("Nodule selection", () => {
     });
 
     await expect(page.getByText("Nodule 1")).toBeVisible({ timeout: 10_000 });
-    await page.getByText("Nodule 1").click();
-    // After selection the row background changes to #2d3748 — verify no JS errors thrown
-    await expect(page.getByText("Nodule 1")).toBeVisible();
+    const row = page.locator("[data-testid='nodule-item']").first();
+    await row.click();
+    // Verify the row background changes to the selected colour (#2d3748 → rgb(45,55,72)).
+    await expect(row).toHaveCSS("background-color", "rgb(45, 55, 72)");
   });
 });
