@@ -213,3 +213,4 @@ outputs/
 
 # Web
 webapp/node_modules/
+webapp/test-results/
