@@ -13,5 +13,6 @@ COPY src/ ./src/
 COPY configs/ ./configs/
 
 ENV PYTHONPATH=/app
+ENV API_WORKERS=2
 
-CMD ["uvicorn", "src.webapp.api:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "uvicorn src.webapp.api:app --host 0.0.0.0 --port 8000 --workers ${API_WORKERS:-2}"]

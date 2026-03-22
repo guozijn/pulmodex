@@ -13,5 +13,7 @@ COPY src/ ./src/
 COPY configs/ ./configs/
 
 ENV PYTHONPATH=/app
+ENV CELERY_WORKER_CONCURRENCY=1
+ENV CELERY_WORKER_LOGLEVEL=info
 
-CMD ["celery", "-A", "src.webapp.tasks", "worker", "--loglevel=info", "--concurrency=1"]
+CMD ["sh", "-c", "celery -A src.webapp.tasks worker --loglevel=${CELERY_WORKER_LOGLEVEL:-info} --concurrency=${CELERY_WORKER_CONCURRENCY:-1}"]

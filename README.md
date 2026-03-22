@@ -106,6 +106,21 @@ docker compose down
 docker compose logs -f worker  # tail GPU worker
 ```
 
+The production-style API container uses environment-driven worker settings. Adjust `API_WORKERS`, `CELERY_WORKER_CONCURRENCY`, and `CELERY_WORKER_LOGLEVEL` in `.env` if needed.
+
+For development mode, use the dedicated Compose file with hot reload for FastAPI and Vite:
+
+```bash
+docker compose -f docker-compose.dev.yml up --build
+docker compose -f docker-compose.dev.yml down
+```
+
+If you also need the GPU Celery worker in development:
+
+```bash
+docker compose -f docker-compose.dev.yml --profile gpu up --build
+```
+
 | Service | URL | Description |
 |---------|-----|-------------|
 | API | http://localhost:8000 | FastAPI — upload scans, poll jobs, fetch slices |
