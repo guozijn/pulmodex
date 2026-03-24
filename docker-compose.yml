@@ -6,8 +6,8 @@ services:
   redis:
     <<: *common
     image: redis:7-alpine
-    expose:
-      - "6379"
+    ports:
+      - "127.0.0.1:6379:6379"
 
   api:
     <<: *common
@@ -34,13 +34,6 @@ services:
       - ./outputs:/app/outputs
     depends_on:
       - redis
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
 
   frontend:
     <<: *common

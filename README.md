@@ -97,28 +97,29 @@ python scripts/export_onnx.py \
 
 ## Web App
 
-The inference web app runs entirely in Docker Compose (CPU API + GPU worker + Redis + React frontend).
+The inference web app can run fully in Docker Compose, while local development runs the app processes on the host and keeps Redis in Docker.
 
 ```bash
-docker compose up              # start
-docker compose up --build      # rebuild images
-docker compose down
-docker compose logs -f worker  # tail GPU worker
+make docker-up
+make docker-down
+make docker-logs
 ```
 
 The production-style API container uses environment-driven worker settings. Adjust `API_WORKERS`, `CELERY_WORKER_CONCURRENCY`, and `CELERY_WORKER_LOGLEVEL` in `.env` if needed.
 
-For development mode, use the dedicated Compose file with hot reload for FastAPI and Vite:
+For local development, start Redis in Docker and run the API, worker, and frontend on the host:
 
 ```bash
-docker compose -f docker-compose.dev.yml up --build
-docker compose -f docker-compose.dev.yml down
+make redis-up
+make dev-api
+make dev-worker
+make dev-frontend
 ```
 
-If you also need the GPU Celery worker in development:
+Or run everything needed for development in one command:
 
 ```bash
-docker compose -f docker-compose.dev.yml --profile gpu up --build
+make dev
 ```
 
 | Service | URL | Description |
