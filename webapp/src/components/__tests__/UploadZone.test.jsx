@@ -7,7 +7,7 @@ import UploadZone from "../UploadZone";
 describe("UploadZone", () => {
   it("shows upload prompt when not disabled", () => {
     render(<UploadZone onUpload={vi.fn()} disabled={false} />);
-    expect(screen.getByText(/Drop .mhd file here or click to upload/)).toBeInTheDocument();
+    expect(screen.getByText(/Drop a .zip DICOM series here or click to upload/)).toBeInTheDocument();
   });
 
   it("shows processing message when disabled", () => {
@@ -19,7 +19,7 @@ describe("UploadZone", () => {
     const onUpload = vi.fn();
     render(<UploadZone onUpload={onUpload} disabled={false} />);
     const input = document.querySelector("input[type='file']");
-    const file = new File(["data"], "scan.mhd", { type: "" });
+    const file = new File(["data"], "scan.zip", { type: "application/zip" });
     await userEvent.upload(input, file);
     expect(onUpload).toHaveBeenCalledWith(file);
   });
@@ -27,8 +27,8 @@ describe("UploadZone", () => {
   it("calls onUpload with dropped file when not disabled", () => {
     const onUpload = vi.fn();
     render(<UploadZone onUpload={onUpload} disabled={false} />);
-    const dropZone = screen.getByText(/Drop .mhd file here/).closest("div");
-    const file = new File(["data"], "scan.mhd", { type: "" });
+    const dropZone = screen.getByText(/Drop a .zip DICOM series here/).closest("div");
+    const file = new File(["data"], "scan.zip", { type: "application/zip" });
     fireEvent.drop(dropZone, { dataTransfer: { files: [file] } });
     expect(onUpload).toHaveBeenCalledWith(file);
   });
@@ -37,7 +37,7 @@ describe("UploadZone", () => {
     const onUpload = vi.fn();
     render(<UploadZone onUpload={onUpload} disabled={true} />);
     const dropZone = screen.getByText("Processing…").closest("div");
-    const file = new File(["data"], "scan.mhd", { type: "" });
+    const file = new File(["data"], "scan.zip", { type: "application/zip" });
     fireEvent.drop(dropZone, { dataTransfer: { files: [file] } });
     expect(onUpload).not.toHaveBeenCalled();
   });

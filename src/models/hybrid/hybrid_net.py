@@ -19,8 +19,8 @@ References:
 import torch
 import torch.nn as nn
 
-from src.models.shared.blocks import ResidualBlockSE
 from src.models.hybrid.swin3d import SwinBottleneck
+from src.models.shared.blocks import ResidualBlockSE
 
 
 class ResEncoder(nn.Module):
@@ -79,7 +79,12 @@ class HybridNet(nn.Module):
         self.pre_swin = nn.Sequential(
             ResidualBlockSE(c * 8, c * 16),
         )
-        self.swin = SwinBottleneck(c * 16, depth=swin_depth, num_heads=swin_heads, window_size=swin_window)
+        self.swin = SwinBottleneck(
+            c * 16,
+            depth=swin_depth,
+            num_heads=swin_heads,
+            window_size=swin_window,
+        )
         self.post_swin = ResidualBlockSE(c * 16, c * 16)
 
         # Decoder

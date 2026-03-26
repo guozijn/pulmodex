@@ -2,7 +2,6 @@
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 
 class ConvBnRelu(nn.Sequential):
@@ -10,7 +9,14 @@ class ConvBnRelu(nn.Sequential):
 
     def __init__(self, in_ch: int, out_ch: int, kernel_size: int = 3, stride: int = 1):
         super().__init__(
-            nn.Conv3d(in_ch, out_ch, kernel_size, stride=stride, padding=kernel_size // 2, bias=False),
+            nn.Conv3d(
+                in_ch,
+                out_ch,
+                kernel_size,
+                stride=stride,
+                padding=kernel_size // 2,
+                bias=False,
+            ),
             nn.BatchNorm3d(out_ch),
             nn.ReLU(inplace=True),
         )

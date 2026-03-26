@@ -15,7 +15,16 @@ import torch.nn.functional as F
 def window_partition(x: torch.Tensor, window_size: int) -> torch.Tensor:
     """Partition (B, D, H, W, C) into non-overlapping windows of size W³."""
     B, D, H, W, C = x.shape
-    x = x.view(B, D // window_size, window_size, H // window_size, window_size, W // window_size, window_size, C)
+    x = x.view(
+        B,
+        D // window_size,
+        window_size,
+        H // window_size,
+        window_size,
+        W // window_size,
+        window_size,
+        C,
+    )
     windows = x.permute(0, 1, 3, 5, 2, 4, 6, 7).contiguous()
     return windows.view(-1, window_size**3, C)
 
@@ -23,7 +32,16 @@ def window_partition(x: torch.Tensor, window_size: int) -> torch.Tensor:
 def window_reverse(windows: torch.Tensor, window_size: int, D: int, H: int, W: int) -> torch.Tensor:
     """Reverse window_partition."""
     B = int(windows.shape[0] / (D * H * W / window_size**3))
-    x = windows.view(B, D // window_size, H // window_size, W // window_size, window_size, window_size, window_size, -1)
+    x = windows.view(
+        B,
+        D // window_size,
+        H // window_size,
+        W // window_size,
+        window_size,
+        window_size,
+        window_size,
+        -1,
+    )
     x = x.permute(0, 1, 4, 2, 5, 3, 6, 7).contiguous()
     return x.view(B, D, H, W, -1)
 
@@ -62,7 +80,13 @@ class WindowAttention3D(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B_, N, C = x.shape
-        qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        qkv = self.qkv(x).reshape(
+            B_,
+            N,
+            3,
+            self.num_heads,
+            C // self.num_heads,
+        ).permute(2, 0, 3, 1, 4)
         q, k, v = qkv.unbind(0)
 
         attn = (q @ k.transpose(-2, -1)) * self.scale

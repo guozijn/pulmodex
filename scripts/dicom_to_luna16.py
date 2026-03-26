@@ -54,7 +54,12 @@ def load_dicom_series(series_dir: str) -> tuple[np.ndarray, np.ndarray, np.ndarr
     """
     dcm_files = sorted(
         [f for f in Path(series_dir).glob("*.dcm")],
-        key=lambda f: float(pydicom.dcmread(str(f), stop_before_pixels=True).ImagePositionPatient[2]),
+        key=lambda f: float(
+            pydicom.dcmread(
+                str(f),
+                stop_before_pixels=True,
+            ).ImagePositionPatient[2]
+        ),
     )
     if not dcm_files:
         raise ValueError(f"No .dcm files in {series_dir}")
@@ -206,7 +211,11 @@ def process_patient(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="DICOM → LUNA16 converter")
-    parser.add_argument("--input_dir", required=True, help="Root dir with per-patient DICOM subdirs")
+    parser.add_argument(
+        "--input_dir",
+        required=True,
+        help="Root dir with per-patient DICOM subdirs",
+    )
     parser.add_argument("--output_dir", required=True, help="Output root (LUNA16-compatible)")
     parser.add_argument("--subset", default="subset0", help="Output subset folder name")
     args = parser.parse_args()

@@ -5,13 +5,27 @@ const MOCK_SERIESUID = "e2e-series-001";
 
 const MOCK_REPORT = {
   top_candidates: [
-    { fp_prob: 0.91, diameter_mm: 9.2, coordX: 120.0, coordY: 55.0, coordZ: 80.0 },
-    { fp_prob: 0.42, diameter_mm: 4.8, coordX: 60.0, coordY: 30.0, coordZ: 40.0 },
+    {
+      fp_prob: 0.91,
+      diameter_mm: 9.2,
+      coordX: 120.0,
+      coordY: 55.0,
+      coordZ: 80.0,
+      slice_indices: { axial: 80, coronal: 55, sagittal: 120 },
+    },
+    {
+      fp_prob: 0.42,
+      diameter_mm: 4.8,
+      coordX: 60.0,
+      coordY: 30.0,
+      coordZ: 40.0,
+      slice_indices: { axial: 40, coronal: 30, sagittal: 60 },
+    },
   ],
 };
 
 /** Register API route mocks before each test. */
-async function mockApi(page, statusState = "SUCCESS") {
+async function mockApi(page, statusState = "SUCCESS", errorMessage = null) {
   await page.route("**/api/predict", (route) =>
     route.fulfill({
       status: 200,
@@ -24,7 +38,7 @@ async function mockApi(page, statusState = "SUCCESS") {
     route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ state: statusState, result: {} }),
+      body: JSON.stringify({ state: statusState, result: {}, error: errorMessage }),
     })
   );
 
@@ -36,29 +50,46 @@ async function mockApi(page, statusState = "SUCCESS") {
     })
   );
 
-  // Return a blank 1×1 PNG for all slice requests
-  await page.route(`**/api/slices/**`, (route) =>
-    route.fulfill({
+  await page.route(`**/api/slices/${MOCK_SERIESUID}/*/index`, async (route) => {
+    const url = new URL(route.request().url());
+    const parts = url.pathname.split("/");
+    const view = parts[parts.length - 2];
+    const count = view === "axial" ? 81 : view === "coronal" ? 56 : 121;
+    const indices = Array.from({ length: count }, (_, idx) => idx);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ view, indices, count }),
+    });
+  });
+
+  // Return a blank 1×1 PNG for slice image requests
+  await page.route(`**/api/slices/${MOCK_SERIESUID}/**`, async (route) => {
+    if (route.request().url().endsWith("/index")) {
+      await route.fallback();
+      return;
+    }
+
+    await route.fulfill({
       status: 200,
       contentType: "image/png",
-      // Minimal valid 1×1 black PNG (base64)
       body: Buffer.from(
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
         "base64"
       ),
-    })
-  );
+    });
+  });
 }
 
 test.describe("Initial page", () => {
   test("shows the application title", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByText("Pulmodex — Lung Nodule Detection")).toBeVisible();
+    await expect(page.getByText("Pulmodex | Lung Nodule Detection")).toBeVisible();
   });
 
   test("shows the upload prompt", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByText(/Drop .mhd file here or click to upload/)).toBeVisible();
+    await expect(page.getByText(/Drop a .zip DICOM series here or click to upload/)).toBeVisible();
   });
 
   test("renders all three view tabs", async ({ page }) => {
@@ -76,9 +107,9 @@ test.describe("Upload flow", () => {
 
     const fileInput = page.locator("input[type='file']");
     await fileInput.setInputFiles({
-      name: "scan.mhd",
-      mimeType: "application/octet-stream",
-      buffer: Buffer.from("mhd data"),
+      name: "scan.zip",
+      mimeType: "application/zip",
+      buffer: Buffer.from("zip data"),
     });
 
     await expect(page.getByText("Queued…")).toBeVisible({ timeout: 5_000 });
@@ -91,13 +122,13 @@ test.describe("Upload flow", () => {
 
     const fileInput = page.locator("input[type='file']");
     await fileInput.setInputFiles({
-      name: "scan.mhd",
-      mimeType: "application/octet-stream",
-      buffer: Buffer.from("mhd data"),
+      name: "scan.zip",
+      mimeType: "application/zip",
+      buffer: Buffer.from("zip data"),
     });
 
     await expect(page.getByText("Complete")).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText("Detected Nodules")).toBeVisible();
+    await expect(page.getByText("Findings")).toBeVisible();
     await expect(page.getByText("Nodule 1")).toBeVisible();
     await expect(page.getByText("Nodule 2")).toBeVisible();
   });
@@ -108,9 +139,9 @@ test.describe("Upload flow", () => {
 
     const fileInput = page.locator("input[type='file']");
     await fileInput.setInputFiles({
-      name: "scan.mhd",
-      mimeType: "application/octet-stream",
-      buffer: Buffer.from("mhd data"),
+      name: "scan.zip",
+      mimeType: "application/zip",
+      buffer: Buffer.from("zip data"),
     });
 
     await expect(page.getByText("Complete")).toBeVisible({ timeout: 10_000 });
@@ -119,17 +150,18 @@ test.describe("Upload flow", () => {
   });
 
   test("shows FAILURE status on job failure", async ({ page }) => {
-    await mockApi(page, "FAILURE");
+    await mockApi(page, "FAILURE", "No DICOM files found in uploaded zip");
     await page.goto("/");
 
     const fileInput = page.locator("input[type='file']");
     await fileInput.setInputFiles({
-      name: "scan.mhd",
-      mimeType: "application/octet-stream",
-      buffer: Buffer.from("mhd data"),
+      name: "scan.zip",
+      mimeType: "application/zip",
+      buffer: Buffer.from("zip data"),
     });
 
     await expect(page.getByText("Failed")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText("No DICOM files found in uploaded zip")).toBeVisible();
   });
 });
 
@@ -142,22 +174,24 @@ test.describe("Viewer interaction", () => {
     await expect(coronalBtn).toBeVisible();
   });
 
-  test("saliency slider is visible and adjustable after SUCCESS", async ({ page }) => {
+  test("overlay controls are visible after SUCCESS", async ({ page }) => {
     await mockApi(page, "SUCCESS");
     await page.goto("/");
 
     const fileInput = page.locator("input[type='file']");
     await fileInput.setInputFiles({
-      name: "scan.mhd",
-      mimeType: "application/octet-stream",
-      buffer: Buffer.from("mhd data"),
+      name: "scan.zip",
+      mimeType: "application/zip",
+      buffer: Buffer.from("zip data"),
     });
 
     await expect(page.getByText("Complete")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText("Heatmap overlay")).toBeVisible();
+    await expect(page.getByRole("button", { name: "ON", exact: true })).toBeVisible();
     const slider = page.locator("input[type='range']");
     await expect(slider).toBeVisible();
     await slider.fill("0.8");
-    await expect(page.getByText(/Saliency opacity: 80%/)).toBeVisible();
+    await expect(page.getByText("OVERLAY 80%")).toBeVisible();
   });
 });
 
@@ -168,15 +202,14 @@ test.describe("Nodule selection", () => {
 
     const fileInput = page.locator("input[type='file']");
     await fileInput.setInputFiles({
-      name: "scan.mhd",
-      mimeType: "application/octet-stream",
-      buffer: Buffer.from("mhd data"),
+      name: "scan.zip",
+      mimeType: "application/zip",
+      buffer: Buffer.from("zip data"),
     });
 
     await expect(page.getByText("Nodule 1")).toBeVisible({ timeout: 10_000 });
     const row = page.locator("[data-testid='nodule-item']").first();
     await row.click();
-    // Verify the row background changes to the selected colour (#2d3748 → rgb(45,55,72)).
-    await expect(row).toHaveCSS("background-color", "rgb(45, 55, 72)");
+    await expect(row).toHaveCSS("background-color", "rgb(28, 28, 28)");
   });
 });

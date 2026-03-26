@@ -1,7 +1,7 @@
 """Evaluation entry point.
 
 Usage:
-    python src/evaluate.py --checkpoint checkpoints/best.ckpt --split test
+    pulmodex evaluate --checkpoint checkpoints/baseline_best.ckpt --split test
 """
 
 from __future__ import annotations
@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -16,26 +17,22 @@ import pandas as pd
 import torch
 from torch.utils.data import DataLoader
 
-from src.data import LUNA16Dataset
-from src.evaluation.froc import compute_froc
-from src.evaluation.metrics import dice_coefficient
+# Allow `python src/evaluate.py ...` from the repo root.
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from src.data import LUNA16Dataset  # noqa: E402
+from src.evaluation.froc import compute_froc  # noqa: E402
+from src.evaluation.metrics import dice_coefficient  # noqa: E402
+from src.models.loading import load_checkpoint_model  # noqa: E402
 
 log = logging.getLogger(__name__)
 
 
 def load_model(checkpoint_path: str, device: str) -> torch.nn.Module:
-    ckpt = torch.load(checkpoint_path, map_location=device)
-    # Detect model type from checkpoint key (saved by Trainer)
-    # Fall back to UNet3D if not determinable
-    try:
-        from src.models.baseline import UNet3D
-        model = UNet3D()
-        model.load_state_dict(ckpt["model_state_dict"])
-    except Exception:
-        from src.models.hybrid import HybridNet
-        model = HybridNet()
-        model.load_state_dict(ckpt["model_state_dict"])
-    return model.to(device).eval()
+    model, _ = load_checkpoint_model(checkpoint_path, device)
+    return model
 
 
 def main() -> None:

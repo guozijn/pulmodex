@@ -119,6 +119,9 @@ def compute_froc(
     if not all(
         sensitivities[i] <= sensitivities[i + 1] + 1e-9 for i in range(len(sensitivities) - 1)
     ):
-        log.warning("FROC sensitivity is not non-decreasing: %s — check prediction scores.", sensitivities)
+        log.warning(
+            "FROC sensitivity is not non-decreasing: %s; check prediction scores.",
+            sensitivities,
+        )
 
     return {"cpm": cpm, "sensitivity": sensitivities, "fps": fps_per_scan}

@@ -52,7 +52,7 @@ class SwinAttentionExtractor:
             saliency: (D, H, W) float32 in [0, 1]
         """
         self._attn_maps.clear()
-        out = self.model(x)
+        self.model(x)
 
         if not self._attn_maps:
             return np.zeros(x.shape[2:], dtype=np.float32)
@@ -63,10 +63,6 @@ class SwinAttentionExtractor:
         avg_map = torch.stack(maps).mean(dim=0)  # (nW*B, ws³)
 
         # Reconstruct spatial volume from window tokens
-        # We know bottleneck spatial size from model output
-        bottleneck_spatial = self.model.swin.blocks[0].window_size  # type: ignore
-        ws = bottleneck_spatial
-        nW_B = avg_map.shape[0]
         # nW = nW_B (batch=1), spatial tokens = nW * ws³ → reshape to (1, d, h, w)
         n_tokens = avg_map.shape[0] * avg_map.shape[1]
         side = round(n_tokens ** (1 / 3))

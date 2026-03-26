@@ -19,6 +19,11 @@ describe("StatusBanner", () => {
     expect(screen.getByText("Running inference…")).toBeInTheDocument();
   });
 
+  it("shows the backend progress step when provided", () => {
+    render(<StatusBanner status="PROGRESS" step="detection" />);
+    expect(screen.getByText("Running detection…")).toBeInTheDocument();
+  });
+
   it("shows complete label for SUCCESS", () => {
     render(<StatusBanner status="SUCCESS" />);
     expect(screen.getByText("Complete")).toBeInTheDocument();
@@ -27,6 +32,16 @@ describe("StatusBanner", () => {
   it("shows failed label for FAILURE", () => {
     render(<StatusBanner status="FAILURE" />);
     expect(screen.getByText("Failed")).toBeInTheDocument();
+  });
+
+  it("shows backend error details for FAILURE", () => {
+    render(<StatusBanner status="FAILURE" error="No DICOM files found in uploaded zip" />);
+    expect(screen.getByText("No DICOM files found in uploaded zip")).toBeInTheDocument();
+  });
+
+  it("shows elapsed runtime when provided", () => {
+    render(<StatusBanner status="PROGRESS" elapsedSeconds={125} />);
+    expect(screen.getByText("ELAPSED 02:05")).toBeInTheDocument();
   });
 
   it("falls back to raw status string for unknown states", () => {

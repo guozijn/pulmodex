@@ -1,62 +1,71 @@
-"""Loss functions: Dice+BCE and Dice-Focal."""
+"""MONAI-backed loss wrappers with the project's existing call signatures."""
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from monai.losses import DiceCELoss as MonaiDiceCELoss
+from monai.losses import DiceFocalLoss as MonaiDiceFocalLoss
+from monai.losses import FocalLoss as MonaiFocalLoss
 
 
-def dice_loss(pred: torch.Tensor, target: torch.Tensor, smooth: float = 1.0) -> torch.Tensor:
-    """Soft Dice loss. pred and target are (B, C, D, H, W) or (B, D, H, W) float tensors."""
-    pred = pred.contiguous().view(pred.size(0), -1)
-    target = target.contiguous().view(target.size(0), -1).float()
-    intersection = (pred * target).sum(dim=1)
-    return 1.0 - (2.0 * intersection + smooth) / (pred.sum(dim=1) + target.sum(dim=1) + smooth)
+def dice_loss(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    smooth: float = 1e-5,
+) -> torch.Tensor:
+    """Per-sample soft Dice loss for binary segmentation tensors."""
+    if target.dim() == pred.dim() - 1:
+        target = target.unsqueeze(1)
+
+    pred = pred.float()
+    target = target.float()
+
+    reduce_dims = tuple(range(1, pred.dim()))
+    intersection = (pred * target).sum(dim=reduce_dims)
+    denom = pred.sum(dim=reduce_dims) + target.sum(dim=reduce_dims)
+    dice = (2.0 * intersection + smooth) / (denom + smooth)
+    return 1.0 - dice
 
 
 class DiceBCELoss(nn.Module):
-    """Dice + Binary Cross-Entropy loss for the baseline model."""
+    """Dice + BCE using MONAI's DiceCELoss."""
 
     def __init__(self, dice_weight: float = 0.5, bce_weight: float = 0.5):
         super().__init__()
-        self.dice_weight = dice_weight
-        self.bce_weight = bce_weight
-        self.bce = nn.BCEWithLogitsLoss()
+        self.loss = MonaiDiceCELoss(
+            sigmoid=True,
+            squared_pred=False,
+            lambda_dice=dice_weight,
+            lambda_ce=bce_weight,
+        )
 
     def forward(self, logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            logits: raw model output (B, 1, D, H, W)
-            target: binary mask (B, 1, D, H, W) or (B, D, H, W)
-        """
         if target.dim() == logits.dim() - 1:
             target = target.unsqueeze(1)
-        bce = self.bce(logits, target.float())
-        pred = torch.sigmoid(logits)
-        dl = dice_loss(pred, target).mean()
-        return self.bce_weight * bce + self.dice_weight * dl
+        return self.loss(logits, target.float())
 
 
 class FocalLoss(nn.Module):
-    """Binary Focal loss."""
+    """Binary focal loss using MONAI's implementation."""
 
     def __init__(self, gamma: float = 2.0, alpha: float = 0.25):
         super().__init__()
-        self.gamma = gamma
-        self.alpha = alpha
+        self.loss = MonaiFocalLoss(
+            include_background=True,
+            use_softmax=False,
+            gamma=gamma,
+            alpha=alpha,
+            reduction="mean",
+        )
 
     def forward(self, logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        bce = F.binary_cross_entropy_with_logits(logits, target.float(), reduction="none")
-        pt = torch.exp(-bce)
-        focal = self.alpha * (1 - pt) ** self.gamma * bce
-        return focal.mean()
+        if target.dim() == logits.dim() - 1:
+            target = target.unsqueeze(1)
+        return self.loss(logits, target.float())
 
 
 class DiceFocalLoss(nn.Module):
-    """Dice + Focal loss for the hybrid model.
-
-    Reference: hybrid U-Net–Transformer / Dice-Focal loss
-    (Nature Sci. Reports, Jan 2026).
-    """
+    """Dice + focal loss with optional deep supervision."""
 
     def __init__(
         self,
@@ -66,9 +75,15 @@ class DiceFocalLoss(nn.Module):
         alpha: float = 0.25,
     ):
         super().__init__()
-        self.dice_weight = dice_weight
-        self.focal_weight = focal_weight
-        self.focal = FocalLoss(gamma, alpha)
+        self.loss = MonaiDiceFocalLoss(
+            sigmoid=True,
+            squared_pred=False,
+            lambda_dice=dice_weight,
+            lambda_focal=focal_weight,
+            gamma=gamma,
+            alpha=alpha,
+        )
+        self.deep_supervision_weight = 0.5
 
     def forward(
         self,
@@ -76,27 +91,15 @@ class DiceFocalLoss(nn.Module):
         target: torch.Tensor,
         deep_supervision_logits: list[torch.Tensor] | None = None,
     ) -> torch.Tensor:
-        """
-        Args:
-            logits: (B, 1, D, H, W) main output
-            target: (B, 1, D, H, W) or (B, D, H, W) binary mask
-            deep_supervision_logits: list of lower-resolution outputs
-        """
         if target.dim() == logits.dim() - 1:
             target = target.unsqueeze(1)
 
-        pred = torch.sigmoid(logits)
-        loss = self.focal_weight * self.focal(logits, target) + self.dice_weight * dice_loss(
-            pred, target
-        ).mean()
+        target = target.float()
+        loss = self.loss(logits, target)
 
         if deep_supervision_logits:
             for ds_logit in deep_supervision_logits:
-                ds_target = F.interpolate(target.float(), size=ds_logit.shape[2:], mode="nearest")
-                ds_pred = torch.sigmoid(ds_logit)
-                loss = loss + 0.5 * (
-                    self.focal_weight * self.focal(ds_logit, ds_target)
-                    + self.dice_weight * dice_loss(ds_pred, ds_target).mean()
-                )
+                ds_target = F.interpolate(target, size=ds_logit.shape[2:], mode="nearest")
+                loss = loss + self.deep_supervision_weight * self.loss(ds_logit, ds_target)
 
         return loss
