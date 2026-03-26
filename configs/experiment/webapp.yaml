@@ -2,8 +2,11 @@
 experiment_name: webapp
 
 webapp:
-  seg_checkpoint: checkpoints/best_hybrid.ckpt
-  fp_checkpoint: checkpoints/best_fp.ckpt
+  primary_checkpoint: checkpoints/hybrid_best.ckpt
+  candidate_threshold: 0.5
+  fp_checkpoint: checkpoints/fp_reduction_best.ckpt
+  min_candidate_voxels: 10
+  primary_patch_size: 256
   fp_threshold: 0.5          # updated after val tuning
   # Lung window for slice rendering
   window_level: -600

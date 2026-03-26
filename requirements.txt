@@ -7,8 +7,9 @@ timm>=0.9.12
 # Data / DICOM
 pydicom>=2.4.0
 SimpleITK>=2.3.0
+itk>=5.4.0
 nibabel>=5.2.0
-numpy>=1.26.0
+numpy>=1.26.0,<2
 scipy>=1.12.0
 scikit-image>=0.22.0
 pandas>=2.2.0

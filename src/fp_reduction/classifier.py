@@ -15,7 +15,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
-from src.models.shared.blocks import ResidualBlock, ConvBnRelu
+from src.models.shared.blocks import ConvBnRelu, ResidualBlock
 
 
 class FPClassifier(nn.Module):

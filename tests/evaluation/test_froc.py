@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.evaluation.froc import compute_froc, FROC_FPS
+from src.evaluation.froc import compute_froc
 
 
 def _make_ann_df(entries):

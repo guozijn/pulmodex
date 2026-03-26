@@ -1,8 +1,8 @@
 """Export a trained checkpoint to ONNX.
 
 Usage:
-    python scripts/export_onnx.py \
-        --checkpoint checkpoints/best.ckpt \
+    pulmodex export-onnx \
+        --checkpoint checkpoints/baseline_best.ckpt \
         --output checkpoints/model.onnx \
         [--model hybrid_net|unet3d|fp_classifier] \
         [--patch_size 256]
@@ -14,28 +14,24 @@ import argparse
 import logging
 from pathlib import Path
 
-import torch
 import onnx
 import onnxruntime as ort
-import numpy as np
+import torch
+
+from src.models.loading import build_model_from_config
 
 log = logging.getLogger(__name__)
 
 
 def load_model(checkpoint: str, model_name: str, device: str) -> torch.nn.Module:
-    ckpt = torch.load(checkpoint, map_location=device)
+    ckpt = torch.load(checkpoint, map_location=device, weights_only=True)
+    model_cfg = ckpt.get("config", {}).get("model", {"name": model_name})
 
-    if model_name == "unet3d":
-        from src.models.baseline import UNet3D
-        model = UNet3D()
-    elif model_name == "hybrid_net":
-        from src.models.hybrid import HybridNet
-        model = HybridNet()
-    elif model_name == "fp_classifier":
-        from src.fp_reduction import FPClassifier
-        model = FPClassifier()
-    else:
-        raise ValueError(f"Unknown model: {model_name}")
+    if model_cfg.get("name") != model_name:
+        model_cfg = dict(model_cfg)
+        model_cfg["name"] = model_name
+
+    model = build_model_from_config(model_cfg)
 
     model.load_state_dict(ckpt["model_state_dict"])
     return model.to(device).eval()

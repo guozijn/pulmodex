@@ -1,11 +1,11 @@
 """Smoke tests for model forward passes."""
 
-import torch
 import pytest
+import torch
 
+from src.fp_reduction import FPClassifier
 from src.models.baseline import UNet3D
 from src.models.hybrid import HybridNet
-from src.fp_reduction import FPClassifier
 
 
 @pytest.mark.parametrize("patch_size", [32, 64])

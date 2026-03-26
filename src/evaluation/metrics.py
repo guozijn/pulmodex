@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import numpy as np
-import torch
 
 
 def dice_coefficient(pred: np.ndarray, target: np.ndarray, threshold: float = 0.5) -> float:

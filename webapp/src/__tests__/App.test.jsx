@@ -12,7 +12,7 @@ afterEach(() => {
 describe("App", () => {
   it("renders the application header", () => {
     render(<App />);
-    expect(screen.getByText(/Pulmodex — Lung Nodule Detection/)).toBeInTheDocument();
+    expect(screen.getByText(/Pulmodex | Lung Nodule Detection/)).toBeInTheDocument();
   });
 
   it("renders all three view tab buttons", () => {
@@ -24,7 +24,7 @@ describe("App", () => {
 
   it("shows upload prompt in the initial state", () => {
     render(<App />);
-    expect(screen.getByText(/Drop .mhd file here/)).toBeInTheDocument();
+    expect(screen.getByText(/Drop a .zip DICOM series here/)).toBeInTheDocument();
   });
 
   it("shows PENDING status and disables the upload zone after submitting a file", async () => {
@@ -38,14 +38,15 @@ describe("App", () => {
 
     render(<App />);
     const input = document.querySelector("input[type='file']");
-    await userEvent.upload(input, new File(["data"], "scan.mhd", { type: "" }));
+    await userEvent.upload(input, new File(["data"], "scan.zip", { type: "application/zip" }));
 
     await waitFor(() => expect(screen.getByText("Queued…")).toBeInTheDocument());
     expect(screen.getByText("Processing…")).toBeInTheDocument();
+    expect(screen.getByText("ELAPSED 00:00")).toBeInTheDocument();
   });
 
   it(
-    "transitions to SUCCESS and shows saliency control when polling resolves",
+    "transitions to SUCCESS and shows overlay controls when polling resolves",
     async () => {
       // NOTE: vi.useFakeTimers() deadlocks in React 18 + jsdom because
       // advanceTimersByTimeAsync cannot resolve chained async Promises while
@@ -59,19 +60,51 @@ describe("App", () => {
           return Promise.resolve({ ok: true, json: () => Promise.resolve({ job_id: "job-2", seriesuid: "series-2" }) });
         if (url.includes("/status"))
           return Promise.resolve({ ok: true, json: () => Promise.resolve({ state: "SUCCESS", result: {} }) });
+        if (url.includes("/slices/")) {
+          return Promise.resolve({ ok: true, json: () => Promise.resolve({ view: "axial", indices: [0, 1], count: 2 }) });
+        }
         return Promise.resolve({ ok: true, json: () => Promise.resolve({ top_candidates: [] }) });
       }));
 
       render(<App />);
       const input = document.querySelector("input[type='file']");
-      await userEvent.upload(input, new File(["d"], "scan.mhd", { type: "" }));
+      await userEvent.upload(input, new File(["d"], "scan.zip", { type: "application/zip" }));
 
       await waitFor(
         () => expect(screen.getByText("Complete")).toBeInTheDocument(),
         { timeout: 4000 },
       );
-      expect(screen.getByText(/Saliency opacity/)).toBeInTheDocument();
+      expect(screen.getByText("Heatmap overlay")).toBeInTheDocument();
+      expect(screen.getByText("ON")).toBeInTheDocument();
     },
     6000,
   );
+
+  it("shows backend failure details when polling returns FAILURE", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url) => {
+      if (url.includes("/predict")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ job_id: "job-fail", seriesuid: "series-fail" }),
+        });
+      }
+      if (url.includes("/status")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            state: "FAILURE",
+            error: "Please provide ground truth targets during training.",
+          }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    }));
+
+    render(<App />);
+    const input = document.querySelector("input[type='file']");
+    await userEvent.upload(input, new File(["d"], "scan.zip", { type: "application/zip" }));
+
+    await waitFor(() => expect(screen.getByText("Failed")).toBeInTheDocument(), { timeout: 4000 });
+    expect(screen.getByText("Please provide ground truth targets during training.")).toBeInTheDocument();
+  });
 });

@@ -12,12 +12,20 @@ Mac CPU smoke test:
 
 import logging
 import random
+import sys
+from pathlib import Path
 
 import hydra
 import numpy as np
 import torch
-from omegaconf import DictConfig
+from monai.utils import set_determinism
+from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader
+
+# Allow `python src/train.py ...` from the repo root.
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +51,11 @@ def build_model(cfg: DictConfig) -> torch.nn.Module:
 
 
 def build_loss(cfg: DictConfig) -> torch.nn.Module:
+    if cfg.model.name == "fp_classifier":
+        from src.fp_reduction import OHEMLoss
+
+        return OHEMLoss(hard_neg_ratio=cfg.data.hard_neg_ratio)
+
     from src.models.shared.losses import DiceBCELoss, DiceFocalLoss, FocalLoss
     name = cfg.loss.name
     if name == "dice_bce":
@@ -61,19 +74,28 @@ def build_loss(cfg: DictConfig) -> torch.nn.Module:
 
 def build_datasets(cfg: DictConfig):
     from src.data import LUNA16Dataset
+    cache_dir = cfg.data.get("cache_dir")
     train_ds = LUNA16Dataset(
         data_dir=cfg.data_dir,
         folds=list(cfg.data.train_folds),
         patch_size=cfg.data.patch_size,
         augment=cfg.data.augment,
+        cache_dir=cache_dir,
     )
     val_ds = LUNA16Dataset(
         data_dir=cfg.data_dir,
         folds=list(cfg.data.val_folds),
         patch_size=cfg.data.patch_size,
         augment=False,
+        cache_dir=cache_dir,
     )
     return train_ds, val_ds
+
+
+def get_task_type(cfg: DictConfig) -> str:
+    if cfg.model.name == "fp_classifier":
+        return "classification"
+    return "segmentation"
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="config")
@@ -82,6 +104,7 @@ def main(cfg: DictConfig) -> None:
     random.seed(cfg.seed)
     np.random.seed(cfg.seed)
     torch.manual_seed(cfg.seed)
+    set_determinism(seed=cfg.seed)
 
     device = str(cfg.trainer.device)
     log.info(f"Starting experiment '{cfg.experiment_name}' on device={device}")
@@ -104,12 +127,15 @@ def main(cfg: DictConfig) -> None:
         shuffle=True,
         num_workers=cfg.data.num_workers,
         pin_memory=device.startswith("cuda"),
+        persistent_workers=cfg.data.num_workers > 0,
     )
     val_loader = DataLoader(
         val_ds,
         batch_size=1,
         shuffle=False,
         num_workers=cfg.data.num_workers,
+        pin_memory=device.startswith("cuda"),
+        persistent_workers=cfg.data.num_workers > 0,
     )
 
     optimizer = torch.optim.AdamW(
@@ -128,9 +154,12 @@ def main(cfg: DictConfig) -> None:
         optimizer=optimizer,
         scheduler=scheduler,
         cfg=cfg.trainer,
+        run_config=OmegaConf.to_container(cfg, resolve=True),
         device=device,
         checkpoint_dir=cfg.checkpoint_dir,
         experiment_name=cfg.experiment_name,
+        task_type=get_task_type(cfg),
+        data_dir=cfg.data_dir,
         wandb_run=wandb_run,
     )
     trainer.fit(train_loader, val_loader)

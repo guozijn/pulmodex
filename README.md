@@ -3,7 +3,7 @@
 AI-powered lung nodule detection from CT scans using deep neural networks.
 
 **Input:** DICOM CT scans
-**Output:** Segmentation masks · confidence maps · saliency maps · annotated slice PNGs · JSON report
+**Output:** Detection overlays · confidence maps · saliency maps · annotated slice PNGs · JSON report
 
 ---
 
@@ -16,7 +16,7 @@ AI-powered lung nodule detection from CT scans using deep neural networks.
 
 Both expose `forward(x) -> {"seg": mask, "logits": raw}`.
 
-Inference is two-stage: sliding-window segmentation → false-positive reduction (3D CNN on 32³ patches, OHEM training).
+Project-native inference is two-stage: sliding-window segmentation → false-positive reduction (3D CNN on 32³ patches, OHEM training). The web stack can also use a MONAI detection bundle as the primary detector before the same FP reduction stage.
 
 **Datasets:** LUNA16 (10-fold CV, primary) · LIDC-IDRI (≥3/4 radiologist consensus, secondary)
 
@@ -27,39 +27,120 @@ Inference is two-stage: sliding-window segmentation → false-positive reduction
 ### Prerequisites
 
 - Python 3.11+, CUDA GPU for training
-- `pip install -r requirements.txt`
+- Recommended: create a local virtualenv instead of using a global Conda base env
+- `python -m venv .venv && source .venv/bin/activate`
+- `pip install -e .`
 - Copy `.env.example` → `.env` and set `DEVICE`, checkpoint paths
+- `MODEL_CHECKPOINT` accepts either a project `.ckpt` file or a MONAI bundle directory
+
+### Development workflow
+
+- Install the project in editable mode with `pip install -e .`
+- Use `pulmodex <subcommand>` as the primary entry point
+- Main subcommands: `train`, `evaluate`, `infer`, `export-onnx`, `generate-mock-data`, `preprocess-cache`, `dicom-to-luna16`
+- Run tests with `python -m pytest`
 
 ### Convert DICOM to LUNA16 format
 
 ```bash
-python scripts/dicom_to_luna16.py \
+pulmodex dicom-to-luna16 \
     --input_dir data/raw_dicom \
     --output_dir data/processed
 ```
 
 After conversion, edit `data/processed/candidates.csv` and `annotations.csv` to add ground-truth labels.
 
+### Precompute training cache
+
+The training dataset can cache each scan after isotropic resampling and HU normalization so repeated candidates from the same CT do not trigger full-volume preprocessing every time. This is most useful when you rerun training repeatedly on the same dataset and want to reduce CPU preprocessing overhead.
+
+```bash
+pulmodex preprocess-cache \
+    --data_dir data/processed \
+    --cache_dir data/processed/.cache/luna16_iso
+```
+
+Training configs already point `data.cache_dir` at this location by default.
+
+For mock data, you can precompute a separate cache and pass it explicitly:
+
+```bash
+pulmodex preprocess-cache \
+    --data_dir data/mock_luna16 \
+    --cache_dir data/mock_luna16/.cache/luna16_iso
+```
+
+```bash
+WANDB_MODE=disabled pulmodex train experiment=baseline \
+    trainer.device=cpu \
+    data_dir=data/mock_luna16 \
+    data.cache_dir=data/mock_luna16/.cache/luna16_iso \
+    data.patch_size=32 \
+    data.batch_size=1 \
+    data.num_workers=0 \
+    trainer.max_epochs=1
+```
+
+Each cached scan writes:
+
+```text
+<seriesuid>_vol.npy
+<seriesuid>_meta.json
+```
+
+Delete and rebuild the cache if preprocessing logic changes, such as resampling behavior, HU normalization, or metadata handling.
+
+### Generate mock LUNA16 data
+
+For local development and smoke tests, you can generate a tiny synthetic dataset that matches the project's LUNA16 reader layout.
+
+```bash
+pulmodex generate-mock-data --clean
+```
+
+This writes `data/mock_luna16/` with:
+
+```text
+subset0..subset9/
+annotations.csv
+candidates.csv
+```
+
 ### Train
 
 ```bash
-python src/train.py experiment=baseline
-python src/train.py experiment=hybrid
-python src/train.py experiment=fp_reduction
+pulmodex train experiment=baseline
+pulmodex train experiment=hybrid
+pulmodex train experiment=fp_reduction
 ```
 
 Checkpoints are saved to `checkpoints/`. W&B logging is enabled automatically if `wandb` is installed.
 
 **Mac CPU smoke test** (MPS unsupported for `conv_transpose3d`):
 ```bash
-PYTORCH_ENABLE_MPS_FALLBACK=1 python src/train.py experiment=baseline \
+PYTORCH_ENABLE_MPS_FALLBACK=1 pulmodex train experiment=baseline \
     trainer.max_epochs=1 data.patch_size=32 data.batch_size=1
 ```
+
+**Mock-data smoke test**:
+```bash
+source .venv/bin/activate
+pulmodex generate-mock-data --clean
+WANDB_MODE=disabled pulmodex train experiment=baseline \
+    trainer.device=cpu \
+    data_dir=data/mock_luna16 \
+    data.patch_size=32 \
+    data.batch_size=1 \
+    data.num_workers=0 \
+    trainer.max_epochs=1
+```
+
+This should complete a 1-epoch end-to-end training run without needing the full LUNA16 dataset.
 
 ### Evaluate
 
 ```bash
-python src/evaluate.py --checkpoint checkpoints/best.ckpt --split test
+pulmodex evaluate --checkpoint checkpoints/baseline_best.ckpt --split test
 ```
 
 Outputs CPM, per-FP-rate sensitivity, and mean Dice to `outputs/eval_results.json`.
@@ -67,18 +148,41 @@ Outputs CPM, per-FP-rate sensitivity, and mean Dice to `outputs/eval_results.jso
 ### Run inference on new scans
 
 ```bash
-python src/inference.py \
-    --checkpoint checkpoints/best.ckpt \
-    --fp_checkpoint checkpoints/best_fp.ckpt \
+pulmodex infer \
+    --checkpoint checkpoints/hybrid_best.ckpt \
+    --fp_checkpoint checkpoints/fp_reduction_best.ckpt \
+    --candidate_threshold 0.5 \
+    --min_candidate_voxels 10 \
+    --primary_patch_size 256 \
+    --fp_threshold 0.5 \
     --input_dir data/processed
 ```
+
+`--checkpoint` accepts either:
+
+- a project checkpoint such as `checkpoints/hybrid_best.ckpt`
+- a MONAI bundle directory such as `checkpoints/monai_lung_nodule_ct_detection_0.6.8`
+
+When using a MONAI bundle, the main detection path comes from the bundle and `--fp_checkpoint` is still used for the local false-positive reduction stage.
+
+`candidate_threshold`, `min_candidate_voxels`, `primary_patch_size`, and `fp_threshold` are the main inference-time controls when using project-native checkpoints. In MONAI bundle mode, bundle-specific preprocessing and detector settings come from the bundle itself, while `fp_threshold` still applies to the local FP reduction stage.
+
+If you want to retain more small nodules, start by lowering `candidate_threshold` and `min_candidate_voxels` on the validation split. Use training changes only if inference-time tuning still underperforms for the target size range.
+
+Suggested tuning order for small-nodule sensitivity:
+
+- Lower `candidate_threshold` first
+- Lower `min_candidate_voxels` second
+- Adjust `fp_threshold` after candidate recall is acceptable
+- Increase or decrease `primary_patch_size` only if context or memory limits become the bottleneck
 
 Artefacts written to `outputs/<seriesuid>/`:
 
 ```
-seg_mask.nii.gz        binary segmentation
-confidence_map.nii.gz  probability map
-saliency_map.nii.gz    Grad-CAM / Swin attention
+seg_mask.nii.gz        binary detection mask / visualisation mask
+confidence_map.nii.gz  confidence map
+saliency_map.nii.gz    Grad-CAM / Swin attention, or empty map in bundle mode
+ct_volume.nii.gz       CT proxy volume for slice rendering (bundle mode)
 candidates.csv         detected nodules with coordinates and confidence
 report.json            summary
 slices/                annotated PNG slices (axial · coronal · sagittal)
@@ -87,11 +191,13 @@ slices/                annotated PNG slices (axial · coronal · sagittal)
 ### Export to ONNX
 
 ```bash
-python scripts/export_onnx.py \
-    --checkpoint checkpoints/best.ckpt \
+pulmodex export-onnx \
+    --checkpoint checkpoints/baseline_best.ckpt \
     --model unet3d \
     --output checkpoints/model.onnx
 ```
+
+`export-onnx` currently supports project checkpoints only. It does not export MONAI bundle directories.
 
 ---
 
@@ -105,7 +211,33 @@ make docker-down
 make docker-logs
 ```
 
-The production-style API container uses environment-driven worker settings. Adjust `API_WORKERS`, `CELERY_WORKER_CONCURRENCY`, and `CELERY_WORKER_LOGLEVEL` in `.env` if needed.
+The production-style API container uses environment-driven worker settings. Adjust the `.env` values below as needed.
+
+Configuration precedence for the web inference stack:
+
+1. `.env` and process environment variables
+2. `configs/experiment/webapp.yaml`
+3. `configs/config.yaml`
+
+In other words, `webapp.yaml` provides web-specific defaults, and `.env` is the final override layer used by the running API and worker processes.
+
+Important `.env` groups:
+
+- Shared runtime:
+  `DEVICE`, `LOG_LEVEL`, `CUDA_VISIBLE_DEVICES`
+- Redis / async backend:
+  `REDIS_URL`, `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`
+- API / worker process settings:
+  `API_WORKERS`, `CELERY_WORKER_CONCURRENCY`, `CELERY_WORKER_LOGLEVEL`
+- Primary detection model:
+  `MODEL_CHECKPOINT`
+  This can point to either a project `.ckpt` file or a MONAI bundle directory.
+- False-positive reduction model:
+  `FP_CHECKPOINT`, `FP_THRESHOLD`
+- Project-native candidate generation knobs:
+  `CANDIDATE_THRESHOLD`, `MIN_CANDIDATE_VOXELS`, `PRIMARY_PATCH_SIZE`
+
+If `MODEL_CHECKPOINT` points at a MONAI bundle directory, the worker uses the bundle's own preprocessing and detection config and then applies the local FP reduction model.
 
 For local development, start Redis in Docker and run the API, worker, and frontend on the host:
 
@@ -130,12 +262,23 @@ make dev
 **API endpoints:**
 
 ```
-POST /predict                         upload .mhd → returns {job_id, seriesuid}
+POST /predict                         upload .zip(DICOM series) → returns {job_id, seriesuid}
 GET  /status/{job_id}                 poll Celery task state
-GET  /slices/{uid}/{view}?idx=N       fetch rendered PNG slice
+GET  /slices/{uid}/{view}?idx=N&layer=...  fetch rendered PNG slice layer
 GET  /slices/{uid}/{view}/index       list available slice indices
 GET  /report/{uid}                    fetch JSON report
 ```
+
+Supported slice layers:
+
+- `layer=composite` renders the combined PNG
+- `layer=base` returns the windowed CT slice
+- `layer=overlay` returns the transparent heatmap + marker overlay
+
+Upload inputs:
+
+- The frontend and API both only accept `.zip` upload for DICOM series
+- `.zip` uploads are unpacked on the API side; the largest enclosed DICOM series is converted to a temporary `.mhd` before the worker runs
 
 ---
 
@@ -178,13 +321,15 @@ docker/             Dockerfiles (api · worker · frontend)
 ## Tests
 
 ```bash
-pytest tests/ -v
+python -m pytest tests/ -v
+npm --prefix webapp test
 ```
 
 Key test coverage:
 - FROC sanity checks (all-zeros → 0.0, perfect → 1.0, sensitivity non-decreasing, radius matching)
 - Model forward passes (UNet3D, HybridNet, FPClassifier)
 - Loss functions (DiceBCELoss, DiceFocalLoss with deep supervision)
+- Frontend component tests (upload flow, status banner, nodule list, viewer)
 
 ---
 

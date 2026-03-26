@@ -1,5 +1,8 @@
 SHELL := /bin/bash
 
+-include .env
+export
+
 COMPOSE ?= docker compose
 PYTHON ?= python
 NPM ?= npm
@@ -9,7 +12,7 @@ API_PORT ?= 8000
 FRONTEND_HOST ?= 0.0.0.0
 FRONTEND_PORT ?= 3000
 
-.PHONY: help redis-up redis-down redis-logs docker-up docker-down docker-logs dev-api dev-worker dev-frontend dev
+.PHONY: help redis-up redis-down redis-logs docker-up docker-down docker-logs dev-api dev-worker dev-frontend dev test test-py test-frontend test-e2e
 
 help:
 	@echo "Available targets:"
@@ -23,6 +26,10 @@ help:
 	@echo "  make dev-worker      Run Celery worker locally against Docker Redis"
 	@echo "  make dev-frontend    Run Vite locally"
 	@echo "  make dev             Start Redis in Docker and run api/worker/frontend locally"
+	@echo "  make test            Run Python tests, frontend unit tests, and E2E tests"
+	@echo "  make test-py         Run Python tests"
+	@echo "  make test-frontend   Run frontend unit tests"
+	@echo "  make test-e2e        Run Playwright E2E tests"
 
 redis-up:
 	$(COMPOSE) up -d redis
@@ -66,3 +73,14 @@ dev:
 	$(PYTHON) -m celery -A src.webapp.tasks worker --loglevel=$${CELERY_WORKER_LOGLEVEL:-info} --concurrency=$${CELERY_WORKER_CONCURRENCY:-1} & \
 	(cd webapp && VITE_API_PROXY_TARGET=http://localhost:$(API_PORT) $(NPM) run dev -- --host $(FRONTEND_HOST) --port $(FRONTEND_PORT)) & \
 	wait
+
+test: test-py test-frontend test-e2e
+
+test-py:
+	$(PYTHON) -m pytest -q
+
+test-frontend:
+	$(NPM) --prefix webapp test
+
+test-e2e:
+	$(NPM) --prefix webapp run test:e2e

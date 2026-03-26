@@ -13,6 +13,7 @@ data:
   patch_size: 128
   batch_size: 1      # larger model, smaller batch
   num_workers: 4
+  cache_dir: ${data_dir}/.cache/luna16_iso
   train_folds: [0, 1, 2, 3, 4, 5, 6, 7]
   val_folds: [8]
   test_folds: [9]

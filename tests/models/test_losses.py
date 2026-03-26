@@ -1,9 +1,9 @@
 """Tests for loss functions."""
 
-import torch
 import pytest
+import torch
 
-from src.models.shared.losses import DiceBCELoss, DiceFocalLoss, FocalLoss, dice_loss
+from src.models.shared.losses import DiceBCELoss, DiceFocalLoss, dice_loss
 
 
 def test_dice_loss_perfect():

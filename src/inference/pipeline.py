@@ -1,7 +1,7 @@
-"""Two-stage inference pipeline: segmentation → FP reduction.
+"""Two-stage inference pipeline: candidate generation → FP reduction.
 
 Stage 1: Slide 256³ patch across the full CT volume in a sliding window.
-         Collect all candidate centroids where seg probability ≥ 0.5.
+         Collect all candidate centroids where model probability ≥ 0.5.
 Stage 2: Extract 32³ patch around each candidate, run FP classifier.
          Keep candidates where FP classifier P(nodule) ≥ fp_threshold.
 
@@ -23,7 +23,6 @@ import nibabel as nib
 import numpy as np
 import pandas as pd
 import torch
-import torch.nn.functional as F
 
 from src.data.preprocessing import (
     extract_patch,
@@ -56,7 +55,7 @@ def _sliding_window_inference(
     device: str,
     batch_size: int = 2,
 ) -> np.ndarray:
-    """Run sliding-window segmentation over the full volume.
+    """Run sliding-window primary model inference over the full volume.
 
     Patches are generated lazily in batches to avoid materialising all
     patches in RAM simultaneously.
@@ -141,39 +140,69 @@ def _extract_candidates(
     return sorted(candidates, key=lambda c: c["prob"], reverse=True)
 
 
+def _candidate_payload(candidate: dict) -> dict:
+    """Return frontend-safe candidate payload with per-view slice indices."""
+    centre_zyx = candidate.get("centre_zyx")
+    payload = {k: v for k, v in candidate.items() if k != "centre_zyx"}
+
+    if centre_zyx is not None:
+        voxel_z = int(round(float(centre_zyx[0])))
+        voxel_y = int(round(float(centre_zyx[1])))
+        voxel_x = int(round(float(centre_zyx[2])))
+        payload["slice_indices"] = {
+            "axial": voxel_z,
+            "coronal": voxel_y,
+            "sagittal": voxel_x,
+        }
+        payload["voxel_z"] = voxel_z
+        payload["voxel_y"] = voxel_y
+        payload["voxel_x"] = voxel_x
+        payload["slice_axial"] = voxel_z
+        payload["slice_coronal"] = voxel_y
+        payload["slice_sagittal"] = voxel_x
+
+    return payload
+
+
 class InferencePipeline:
     """Two-stage inference pipeline.
 
     Args:
-        seg_model: segmentation model (UNet3D or HybridNet)
+        primary_model: primary candidate-generation model (UNet3D or HybridNet)
         fp_model: FPClassifier
         fp_threshold: probability threshold for FP classifier
+        candidate_threshold: probability threshold for generated candidates
+        min_candidate_voxels: connected-component size floor for candidates
         device: torch device string
-        seg_patch_size: sliding-window patch size (256 for inference)
+        primary_patch_size: sliding-window patch size (256 for inference)
         use_swin: if True, use SwinAttentionExtractor; else GradCAM
     """
 
     def __init__(
         self,
-        seg_model: torch.nn.Module,
+        primary_model: torch.nn.Module,
         fp_model: torch.nn.Module,
         fp_threshold: float = 0.5,
+        candidate_threshold: float = 0.5,
+        min_candidate_voxels: int = 10,
         device: str = "cpu",
-        seg_patch_size: int = 256,
+        primary_patch_size: int = 256,
         use_swin: bool = False,
     ):
-        self.seg_model = seg_model.to(device).eval()
+        self.primary_model = primary_model.to(device).eval()
         self.fp_model = fp_model.to(device).eval()
         self.fp_threshold = fp_threshold
+        self.candidate_threshold = candidate_threshold
+        self.min_candidate_voxels = min_candidate_voxels
         self.device = device
-        self.seg_patch_size = seg_patch_size
+        self.primary_patch_size = primary_patch_size
 
         if use_swin:
             from src.interpretability import SwinAttentionExtractor
-            self.saliency_fn = SwinAttentionExtractor(seg_model)
+            self.saliency_fn = SwinAttentionExtractor(primary_model)
         else:
             from src.interpretability import GradCAM
-            self.saliency_fn = GradCAM(seg_model)
+            self.saliency_fn = GradCAM(primary_model)
 
     def run(self, mhd_path: str, output_dir: str, seriesuid: str) -> dict:
         """Run full inference on a single CT scan.
@@ -194,13 +223,19 @@ class InferencePipeline:
         vol, spacing = resample_to_isotropic(vol, spacing)
         vol = normalise_hu(vol)
 
-        # --- Stage 1: segmentation ---
-        log.info("Running sliding-window segmentation …")
-        prob_map = _sliding_window_inference(vol, self.seg_model, self.seg_patch_size, self.device)
-        seg_mask = (prob_map >= 0.5).astype(np.uint8)
+        # --- Stage 1: candidate generation ---
+        log.info("Running sliding-window candidate generation …")
+        prob_map = _sliding_window_inference(vol, self.primary_model, self.primary_patch_size, self.device)
+        detection_mask = (prob_map >= self.candidate_threshold).astype(np.uint8)
 
-        candidates = _extract_candidates(prob_map, spacing, origin)
-        log.info(f"  {len(candidates)} candidates from segmentation")
+        candidates = _extract_candidates(
+            prob_map,
+            spacing,
+            origin,
+            threshold=self.candidate_threshold,
+            min_voxels=self.min_candidate_voxels,
+        )
+        log.info(f"  {len(candidates)} candidates from primary model")
 
         # --- Saliency on the full volume (patch-by-patch) ---
         log.info("Computing saliency …")
@@ -213,14 +248,11 @@ class InferencePipeline:
 
         # --- Save artefacts ---
         affine = np.diag(list(spacing[::-1]) + [1.0])  # approx affine (RAS)
-        nib.save(nib.Nifti1Image(seg_mask, affine), str(out_path / "seg_mask.nii.gz"))
+        nib.save(nib.Nifti1Image(detection_mask, affine), str(out_path / "seg_mask.nii.gz"))
         nib.save(nib.Nifti1Image(prob_map, affine), str(out_path / "confidence_map.nii.gz"))
         nib.save(nib.Nifti1Image(saliency_map, affine), str(out_path / "saliency_map.nii.gz"))
 
-        cand_df = pd.DataFrame([
-            {k: v for k, v in c.items() if k != "centre_zyx"}
-            for c in final_candidates
-        ])
+        cand_df = pd.DataFrame([_candidate_payload(c) for c in final_candidates])
         cand_df.insert(0, "seriesuid", seriesuid)
         cand_df.to_csv(out_path / "candidates.csv", index=False)
 
@@ -229,7 +261,7 @@ class InferencePipeline:
             "n_candidates_stage1": len(candidates),
             "n_candidates_final": len(final_candidates),
             "top_candidates": [
-                {k: v for k, v in c.items() if k != "centre_zyx"}
+                _candidate_payload(c)
                 for c in final_candidates[:5]
             ],
         }

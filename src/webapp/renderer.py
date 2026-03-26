@@ -1,20 +1,7 @@
-"""Slice renderer: annotated PNG slices for each CT view.
-
-Rendering pipeline per slice:
-  1. Apply lung window (WL −600, WW 1500) → 8-bit grey
-  2. Overlay jet-coloured saliency map (configurable opacity)
-  3. Draw circle per candidate (radius ∝ diameter_mm in pixels)
-     - red   (255,   0,   0) if prob ≥ fp_threshold
-     - orange(255, 165,   0) if prob <  fp_threshold
-  4. Burn confidence score text next to each circle
-
-Writes slices/<view>_<idx>.png under the scan's output directory.
-Views: axial (z), coronal (y), sagittal (x).
-"""
+"""Slice renderer for base CT slices and transparent visual overlays."""
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Literal
 
@@ -47,25 +34,16 @@ def _apply_lung_window(
     return vol_8bit
 
 
-def _overlay_saliency(
-    grey: np.ndarray,
+def _saliency_rgba(
     saliency_slice: np.ndarray,
     alpha: float = 0.4,
 ) -> np.ndarray:
-    """Overlay jet saliency on greyscale slice.
-
-    Args:
-        grey: (H, W) uint8
-        saliency_slice: (H, W) float32 in [0, 1]
-        alpha: saliency blend weight
-
-    Returns:
-        rgb: (H, W, 3) uint8
-    """
-    rgb = cv2.cvtColor(grey, cv2.COLOR_GRAY2BGR)
+    """Return transparent RGBA saliency overlay for a slice."""
     sal_8bit = (saliency_slice * 255).astype(np.uint8)
     jet = cv2.applyColorMap(sal_8bit, cv2.COLORMAP_JET)
-    return cv2.addWeighted(rgb, 1.0 - alpha, jet, alpha, 0)
+    rgba = cv2.cvtColor(jet, cv2.COLOR_BGR2BGRA)
+    rgba[..., 3] = np.clip(saliency_slice * alpha * 255, 0, 255).astype(np.uint8)
+    return rgba
 
 
 def _draw_candidates(
@@ -79,7 +57,7 @@ def _draw_candidates(
     """Draw candidate circles and confidence scores.
 
     Args:
-        img: (H, W, 3) uint8 BGR
+        img: (H, W, 4) uint8 BGRA
         candidates_on_slice: list of {cy, cx, prob, diameter_mm}
         spacing_yx: (mm/pixel_y, mm/pixel_x)
         fp_threshold: threshold for confident vs uncertain colour
@@ -94,18 +72,27 @@ def _draw_candidates(
         radius_px = max(3, int(round((diam_mm / 2.0) / spacing_yx[0])))
 
         color = confident_color if prob >= fp_threshold else uncertain_color
-        cv2.circle(img, (cx, cy), radius_px, color, thickness=2, lineType=cv2.LINE_AA)
+        cv2.circle(img, (cx, cy), radius_px, (*color, 255), thickness=2, lineType=cv2.LINE_AA)
         cv2.putText(
             img,
             f"{prob:.2f}",
             (cx + radius_px + 2, cy),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.4,
-            color,
+            (*color, 255),
             1,
             cv2.LINE_AA,
         )
     return img
+
+
+def _composite_base_and_overlay(base_bgr: np.ndarray, overlay_bgra: np.ndarray) -> np.ndarray:
+    """Composite a transparent BGRA overlay onto a BGR base image."""
+    out = base_bgr.astype(np.float32).copy()
+    alpha = (overlay_bgra[..., 3:4].astype(np.float32)) / 255.0
+    overlay_rgb = overlay_bgra[..., :3].astype(np.float32)
+    out = overlay_rgb * alpha + out * (1.0 - alpha)
+    return np.clip(out, 0, 255).astype(np.uint8)
 
 
 def render_slices(
@@ -121,11 +108,11 @@ def render_slices(
     """Render annotated PNG slices for all three views.
 
     Reads:
-      - confidence_map.nii.gz  (as CT proxy if vol not available)
+      - ct_volume.nii.gz or confidence_map.nii.gz as CT proxy
       - saliency_map.nii.gz
       - candidates.csv
 
-    Writes slices to scan_output_dir/slices/<view>_<idx:04d>.png.
+    Writes base, overlay, and composite PNG slices under scan_output_dir/slices/.
 
     Args:
         scan_output_dir: output directory for a single scan
@@ -139,9 +126,26 @@ def render_slices(
     slice_dir = base / "slices"
     slice_dir.mkdir(exist_ok=True)
 
-    conf_map: np.ndarray = nib.load(str(base / "confidence_map.nii.gz")).get_fdata().astype(np.float32)
-    sal_map: np.ndarray = nib.load(str(base / "saliency_map.nii.gz")).get_fdata().astype(np.float32)
-    cand_df = pd.read_csv(base / "candidates.csv") if (base / "candidates.csv").exists() else pd.DataFrame()
+    ct_proxy_path = base / "ct_volume.nii.gz"
+    if not ct_proxy_path.exists():
+        ct_proxy_path = base / "confidence_map.nii.gz"
+
+    ct_proxy_img = nib.load(str(ct_proxy_path))
+    spacing_from_affine = tuple(
+        float(v)
+        for v in np.linalg.norm(ct_proxy_img.affine[:3, :3], axis=0)[::-1]
+    )
+    spacing_mm = spacing_from_affine
+
+    conf_map: np.ndarray = ct_proxy_img.get_fdata().astype(np.float32)
+    sal_map: np.ndarray = (
+        nib.load(str(base / "saliency_map.nii.gz")).get_fdata().astype(np.float32)
+    )
+    cand_df = (
+        pd.read_csv(base / "candidates.csv")
+        if (base / "candidates.csv").exists()
+        else pd.DataFrame()
+    )
 
     written: list[str] = []
     view_configs: list[tuple[str, int]] = [("axial", 0), ("coronal", 1), ("sagittal", 2)]
@@ -160,17 +164,31 @@ def render_slices(
             sal_slice = sal_map[tuple(sl)]
 
             grey = _apply_lung_window(conf_slice, window_level, window_width)
-            rgb = _overlay_saliency(grey, sal_slice, alpha=saliency_alpha)
+            base_bgr = cv2.cvtColor(grey, cv2.COLOR_GRAY2BGR)
+            overlay_bgra = _saliency_rgba(sal_slice, alpha=saliency_alpha)
 
             # Find candidates on this slice (within ±diameter/2 voxels)
             if not cand_df.empty:
                 on_slice = _candidates_on_slice(cand_df, axis, idx, spacing_mm)
                 if on_slice:
-                    rgb = _draw_candidates(rgb, on_slice, spacing_yx, fp_threshold, confident_color, uncertain_color)
+                    overlay_bgra = _draw_candidates(
+                        overlay_bgra,
+                        on_slice,
+                        spacing_yx,
+                        fp_threshold,
+                        confident_color,
+                        uncertain_color,
+                    )
 
-            out_path = str(slice_dir / f"{view_name}_{idx:04d}.png")
-            cv2.imwrite(out_path, rgb)
-            written.append(out_path)
+            composite_bgr = _composite_base_and_overlay(base_bgr, overlay_bgra)
+
+            base_path = str(slice_dir / f"base_{view_name}_{idx:04d}.png")
+            overlay_path = str(slice_dir / f"overlay_{view_name}_{idx:04d}.png")
+            composite_path = str(slice_dir / f"{view_name}_{idx:04d}.png")
+            cv2.imwrite(base_path, base_bgr)
+            cv2.imwrite(overlay_path, overlay_bgra)
+            cv2.imwrite(composite_path, composite_bgr)
+            written.extend([base_path, overlay_path, composite_path])
 
     return written
 
@@ -184,11 +202,15 @@ def _candidates_on_slice(
     """Return candidates whose centroid lies within ±radius voxels of slice_idx."""
     result = []
     for _, row in cand_df.iterrows():
-        # coordX/Y/Z are world mm (LPS); convert to voxel
-        # Simplified: assume origin=0 (artefacts already resampled to isotropic)
-        vox_z = row["coordZ"] / spacing_mm[0]
-        vox_y = row["coordY"] / spacing_mm[1]
-        vox_x = row["coordX"] / spacing_mm[2]
+        if {"voxel_z", "voxel_y", "voxel_x"}.issubset(cand_df.columns):
+            vox_z = float(row["voxel_z"])
+            vox_y = float(row["voxel_y"])
+            vox_x = float(row["voxel_x"])
+        else:
+            # Fallback for older artefacts without voxel columns.
+            vox_z = row["coordZ"] / spacing_mm[0]
+            vox_y = row["coordY"] / spacing_mm[1]
+            vox_x = row["coordX"] / spacing_mm[2]
         radius_vox = row["diameter_mm"] / 2.0 / spacing_mm[axis]
 
         centres = [vox_z, vox_y, vox_x]
