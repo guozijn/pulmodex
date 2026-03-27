@@ -181,7 +181,7 @@ class InferencePipeline:
     def __init__(
         self,
         primary_model: torch.nn.Module,
-        fp_model: torch.nn.Module,
+        fp_model: torch.nn.Module | None,
         fp_threshold: float = 0.5,
         candidate_threshold: float = 0.5,
         min_candidate_voxels: int = 10,
@@ -190,7 +190,7 @@ class InferencePipeline:
         use_swin: bool = False,
     ):
         self.primary_model = primary_model.to(device).eval()
-        self.fp_model = fp_model.to(device).eval()
+        self.fp_model = fp_model.to(device).eval() if fp_model is not None else None
         self.fp_threshold = fp_threshold
         self.candidate_threshold = candidate_threshold
         self.min_candidate_voxels = min_candidate_voxels
@@ -273,6 +273,9 @@ class InferencePipeline:
     # ------------------------------------------------------------------
 
     def _fp_filter(self, vol: np.ndarray, candidates: list[dict]) -> list[dict]:
+        if self.fp_model is None:
+            return candidates
+
         kept = []
         with torch.no_grad():
             for cand in candidates:

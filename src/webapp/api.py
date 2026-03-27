@@ -143,10 +143,12 @@ def _body_crop_image(
     largest connected component, then expand the bounding box by a small margin.
     If no stable foreground is found, return the original image unchanged.
     """
+    # Cast to float32 so threshold bounds don't overflow integer pixel types.
+    float_image = sitk.Cast(image, sitk.sitkFloat32)
     body_mask = sitk.BinaryThreshold(
-        image,
+        float_image,
         lowerThreshold=body_threshold_hu,
-        upperThreshold=1e9,
+        upperThreshold=3072.0,  # above any physical HU value
         insideValue=1,
         outsideValue=0,
     )
@@ -220,6 +222,17 @@ async def predict(file: UploadFile = File(...)):
 
     scan_path = _prepare_scan_input(upload_path, dest, seriesuid)
 
+    # Persist scan metadata so history survives restarts
+    import json, datetime
+    out_dir = Path(OUTPUT_DIR) / seriesuid
+    out_dir.mkdir(parents=True, exist_ok=True)
+    meta = {
+        "seriesuid": seriesuid,
+        "filename": safe_name,
+        "uploaded_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    }
+    (out_dir / "meta.json").write_text(json.dumps(meta))
+
     # Enqueue
     task = predict_task.delay(str(scan_path), OUTPUT_DIR, seriesuid)
     return {"job_id": task.id, "seriesuid": seriesuid}
@@ -292,6 +305,28 @@ async def list_slices(uid: str, view: str):
     else:
         indices = [int(f.stem.split("_")[2]) for f in files]
     return {"view": view, "indices": indices, "count": len(indices)}
+
+
+@app.get("/scans")
+async def list_scans():
+    """Return all completed scans ordered newest-first."""
+    import json
+    scans = []
+    for scan_dir in sorted(Path(OUTPUT_DIR).iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+        if not scan_dir.is_dir():
+            continue
+        meta_path = scan_dir / "meta.json"
+        report_path = scan_dir / "report.json"
+        if not meta_path.exists():
+            continue
+        meta = json.loads(meta_path.read_text())
+        if report_path.exists():
+            meta["report"] = json.loads(report_path.read_text())
+            meta["status"] = "done"
+        else:
+            meta["status"] = "pending"
+        scans.append(meta)
+    return scans
 
 
 @app.get("/report/{uid}")

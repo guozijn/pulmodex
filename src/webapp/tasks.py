@@ -76,7 +76,12 @@ def _get_pipeline():
         )
     )
 
-    fp_model, _ = load_checkpoint_model(fp_ckpt, device)
+    fp_model = None
+    fp_ckpt_path = Path(fp_ckpt)
+    if fp_ckpt_path.exists():
+        fp_model, _ = load_checkpoint_model(fp_ckpt, device)
+    else:
+        log.warning("FP checkpoint not found at %s — FP reduction stage will be skipped", fp_ckpt)
 
     if is_monai_bundle_path(primary_checkpoint):
         return MONAIBundleDetectionPipeline(

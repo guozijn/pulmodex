@@ -36,13 +36,19 @@ def _apply_lung_window(
 
 def _saliency_rgba(
     saliency_slice: np.ndarray,
-    alpha: float = 0.4,
+    alpha: float = 0.4,  # kept for signature compatibility, no longer baked in
 ) -> np.ndarray:
-    """Return transparent RGBA saliency overlay for a slice."""
+    """Return an RGBA saliency overlay for a slice.
+
+    Alpha is NOT baked into the PNG — pixels with signal are fully opaque,
+    pixels with no signal are fully transparent.  The frontend CSS opacity
+    slider controls the final blend level across the full 0–100 % range.
+    """
     sal_8bit = (saliency_slice * 255).astype(np.uint8)
     jet = cv2.applyColorMap(sal_8bit, cv2.COLORMAP_JET)
     rgba = cv2.cvtColor(jet, cv2.COLOR_BGR2BGRA)
-    rgba[..., 3] = np.clip(saliency_slice * alpha * 255, 0, 255).astype(np.uint8)
+    # Fully opaque where signal exists, transparent elsewhere
+    rgba[..., 3] = np.where(saliency_slice > 1e-4, 255, 0).astype(np.uint8)
     return rgba
 
 
@@ -68,21 +74,19 @@ def _draw_candidates(
         prob = float(cand["prob"])
         diam_mm = float(cand["diameter_mm"])
 
-        # Radius in pixels (use y-spacing as approximation)
-        radius_px = max(3, int(round((diam_mm / 2.0) / spacing_yx[0])))
+        # Radius in pixels — enforce a visible minimum of 12 px
+        radius_px = max(12, int(round((diam_mm / 2.0) / spacing_yx[0])))
 
         color = confident_color if prob >= fp_threshold else uncertain_color
+        # Outer glow (dark halo for contrast against both bright and dark tissue)
+        cv2.circle(img, (cx, cy), radius_px + 1, (0, 0, 0, 255), thickness=3, lineType=cv2.LINE_AA)
+        # Main circle
         cv2.circle(img, (cx, cy), radius_px, (*color, 255), thickness=2, lineType=cv2.LINE_AA)
-        cv2.putText(
-            img,
-            f"{prob:.2f}",
-            (cx + radius_px + 2, cy),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.4,
-            (*color, 255),
-            1,
-            cv2.LINE_AA,
-        )
+        # Score label with dark shadow for readability
+        label = f"{prob:.2f}"
+        lx, ly = cx + radius_px + 4, cy + 4
+        cv2.putText(img, label, (lx + 1, ly + 1), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0, 255), 2, cv2.LINE_AA)
+        cv2.putText(img, label, (lx, ly), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (*color, 255), 1, cv2.LINE_AA)
     return img
 
 
@@ -138,9 +142,18 @@ def render_slices(
     spacing_mm = spacing_from_affine
 
     conf_map: np.ndarray = ct_proxy_img.get_fdata().astype(np.float32)
+
     sal_map: np.ndarray = (
         nib.load(str(base / "saliency_map.nii.gz")).get_fdata().astype(np.float32)
     )
+    # When saliency is all zeros (e.g. MONAI bundle pipeline), fall back to the
+    # confidence map so the heatmap overlay actually shows detection signal.
+    if sal_map.max() < 1e-6:
+        conf_map_path = base / "confidence_map.nii.gz"
+        if conf_map_path.exists():
+            sal_map = nib.load(str(conf_map_path)).get_fdata().astype(np.float32)
+            if sal_map.max() > 0:
+                sal_map = sal_map / sal_map.max()
     cand_df = (
         pd.read_csv(base / "candidates.csv")
         if (base / "candidates.csv").exists()
@@ -167,18 +180,21 @@ def render_slices(
             base_bgr = cv2.cvtColor(grey, cv2.COLOR_GRAY2BGR)
             overlay_bgra = _saliency_rgba(sal_slice, alpha=saliency_alpha)
 
-            # Find candidates on this slice (within ±diameter/2 voxels)
+            # Draw nodule circles directly onto the base image so they are
+            # always visible at full opacity regardless of the overlay toggle.
             if not cand_df.empty:
                 on_slice = _candidates_on_slice(cand_df, axis, idx, spacing_mm)
                 if on_slice:
-                    overlay_bgra = _draw_candidates(
-                        overlay_bgra,
+                    base_bgra = cv2.cvtColor(base_bgr, cv2.COLOR_BGR2BGRA)
+                    base_bgra = _draw_candidates(
+                        base_bgra,
                         on_slice,
                         spacing_yx,
                         fp_threshold,
                         confident_color,
                         uncertain_color,
                     )
+                    base_bgr = cv2.cvtColor(base_bgra, cv2.COLOR_BGRA2BGR)
 
             composite_bgr = _composite_base_and_overlay(base_bgr, overlay_bgra)
 

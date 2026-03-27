@@ -31,9 +31,10 @@ describe("App", () => {
     // Prevent the real 2 s interval from running during this test.
     vi.spyOn(window, "setInterval").mockReturnValue(99);
     vi.spyOn(window, "clearInterval").mockImplementation(() => {});
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ job_id: "job-1", seriesuid: "series-1" }),
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url) => {
+      if (url.includes("/predict"))
+        return Promise.resolve({ ok: true, json: async () => ({ job_id: "job-1", seriesuid: "series-1" }) });
+      return Promise.resolve({ ok: true, json: async () => [] });
     }));
 
     render(<App />);

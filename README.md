@@ -16,9 +16,13 @@ AI-powered lung nodule detection from CT scans using deep neural networks.
 
 Both expose `forward(x) -> {"seg": mask, "logits": raw}`.
 
-Project-native inference is two-stage: sliding-window segmentation → false-positive reduction (3D CNN on 32³ patches, OHEM training). The web stack can also use a MONAI detection bundle as the primary detector before the same FP reduction stage.
+**Project-native inference** is two-stage: sliding-window segmentation → false-positive reduction (3D CNN on 32³ patches, OHEM training).
+
+**MONAI bundle inference** uses a pretrained 3D RetinaNet detector (e.g. `lung_nodule_ct_detection`) as the primary detector, followed by the same optional local FP reduction stage. Set `MODEL_CHECKPOINT` to a MONAI bundle directory to activate this path.
 
 **Datasets:** LUNA16 (10-fold CV, primary) · LIDC-IDRI (≥3/4 radiologist consensus, secondary)
+
+> **Note:** `LUNA16Dataset` and `LIDCDataset` classes are referenced in `src/train.py` and `src/evaluate.py` but are not yet implemented. The `src/data/` package currently provides preprocessing utilities only (`load_mhd`, `normalise_hu`, `resample_to_isotropic`, `extract_patch`). Dataset implementations are required before training from scratch.
 
 ---
 
@@ -26,12 +30,50 @@ Project-native inference is two-stage: sliding-window segmentation → false-pos
 
 ### Prerequisites
 
-- Python 3.11+, CUDA GPU for training
-- Recommended: create a local virtualenv instead of using a global Conda base env
-- `python -m venv .venv && source .venv/bin/activate`
-- `pip install -e .`
-- Copy `.env.example` → `.env` and set `DEVICE`, checkpoint paths
-- `MODEL_CHECKPOINT` accepts either a project `.ckpt` file or a MONAI bundle directory
+**System dependencies**
+
+| Tool | Minimum version | Notes |
+|------|----------------|-------|
+| Python | 3.11 | `python3 --version` |
+| pip | 23+ | bundled with Python 3.11 |
+| Node.js | 18 LTS | `node --version` |
+| npm | 9+ | bundled with Node.js 18 |
+| Docker | 24+ | `docker --version` |
+| Docker Compose | v2 (plugin) | `docker compose version` |
+| CUDA GPU | — | required for training; CPU-only inference is supported |
+
+**Docker socket access (Linux)**
+
+Your user must be in the `docker` group to run `make dev` or any `docker compose` target without `sudo`:
+
+```bash
+sudo usermod -aG docker $USER
+exec su -l $USER   # apply in current shell, or log out and back in
+```
+
+**Python environment**
+
+Recommended: create a local virtualenv instead of using a global Conda base env:
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e .
+```
+
+**Frontend dependencies**
+
+```bash
+npm --prefix webapp install
+```
+
+**Environment file**
+
+```bash
+cp .env.example .env
+# edit .env: set DEVICE, MODEL_CHECKPOINT, FP_CHECKPOINT
+```
+
+`MODEL_CHECKPOINT` accepts either a project `.ckpt` file or a MONAI bundle directory.
 
 ### Development workflow
 
@@ -181,7 +223,7 @@ Artefacts written to `outputs/<seriesuid>/`:
 ```
 seg_mask.nii.gz        binary detection mask / visualisation mask
 confidence_map.nii.gz  confidence map
-saliency_map.nii.gz    Grad-CAM / Swin attention, or empty map in bundle mode
+saliency_map.nii.gz    Grad-CAM / Swin attention; falls back to confidence map in bundle mode
 ct_volume.nii.gz       CT proxy volume for slice rendering (bundle mode)
 candidates.csv         detected nodules with coordinates and confidence
 report.json            summary
@@ -262,18 +304,19 @@ make dev
 **API endpoints:**
 
 ```
-POST /predict                         upload .zip(DICOM series) → returns {job_id, seriesuid}
-GET  /status/{job_id}                 poll Celery task state
+POST /predict                              upload .zip DICOM series → {job_id, seriesuid}
+GET  /status/{job_id}                      poll Celery task state → {state, progress, result, error}
 GET  /slices/{uid}/{view}?idx=N&layer=...  fetch rendered PNG slice layer
-GET  /slices/{uid}/{view}/index       list available slice indices
-GET  /report/{uid}                    fetch JSON report
+GET  /slices/{uid}/{view}/index            list available slice indices for a view
+GET  /scans                                list all completed scans (scan history), newest first
+GET  /report/{uid}                         fetch JSON inference report for a scan
 ```
 
 Supported slice layers:
 
 - `layer=composite` renders the combined PNG
-- `layer=base` returns the windowed CT slice
-- `layer=overlay` returns the transparent heatmap + marker overlay
+- `layer=base` returns the windowed CT slice with nodule circles drawn directly on it
+- `layer=overlay` returns the transparent heatmap (JET colormap, signal pixels fully opaque; opacity controlled client-side)
 
 Upload inputs:
 
@@ -298,7 +341,7 @@ Greedy matching by descending confidence. Per-scan average (never global pool).
 
 ```
 src/
-  data/             preprocessing, LUNA16 & LIDC-IDRI datasets
+  data/             preprocessing utilities (load_mhd, normalise_hu, resample_to_isotropic, extract_patch)
   models/
     baseline/       3D U-Net
     hybrid/         Res-U-Net + Swin Transformer
@@ -307,12 +350,12 @@ src/
   evaluation/       FROC, Dice
   fp_reduction/     FP classifier + OHEM loss
   interpretability/ Grad-CAM (baseline), Swin attention (hybrid)
-  inference/        two-stage pipeline + artefact writer
+  inference/        sliding-window pipeline · MONAI bundle adapter · artefact writer
   webapp/           FastAPI · Celery tasks · slice renderer
 configs/experiment/ baseline · hybrid · fp_reduction · webapp
 tests/              mirrors src/
 scripts/            dicom_to_luna16.py · export_onnx.py
-webapp/             React frontend
+webapp/             React frontend (Vite + JSX)
 docker/             Dockerfiles (api · worker · frontend)
 ```
 

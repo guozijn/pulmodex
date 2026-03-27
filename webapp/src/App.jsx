@@ -154,6 +154,7 @@ export default function App() {
   const [overlayOpacity, setOverlayOpacity] = useState(0.45);
   const [selectedNodule, setSelectedNodule] = useState(null);
   const [sliceCatalog, setSliceCatalog] = useState({});
+  const [history, setHistory] = useState([]);
   const pollRef = useRef(null);
 
   useEffect(() => {
@@ -167,6 +168,15 @@ export default function App() {
 
     return () => window.clearInterval(timer);
   }, [finishedAt, startedAt, status]);
+
+  const loadHistory = useCallback(async () => {
+    try {
+      const res = await fetch(`${API}/scans`);
+      if (res.ok) { const data = await res.json(); setHistory(Array.isArray(data) ? data : []); }
+    } catch (_) {}
+  }, []);
+
+  useEffect(() => { loadHistory(); }, [loadHistory]);
 
   const loadSliceCatalog = useCallback(async (uid) => {
     const entries = await Promise.all(
@@ -237,6 +247,7 @@ export default function App() {
           const catalog = await loadSliceCatalog(data.seriesuid);
           const initialIndices = catalog.axial?.indices ?? [];
           setSliceIdx(initialIndices[0] ?? 0);
+          handleUploadSuccess();
         } else if (s.state === "FAILURE") {
           clearInterval(pollRef.current);
           setFinishedAt((prev) => prev ?? Date.now());
@@ -254,6 +265,28 @@ export default function App() {
     }
   }, [loadSliceCatalog]);
 
+  const openScan = useCallback(async (scan) => {
+    clearInterval(pollRef.current);
+    setJobId(null);
+    setSeriesuid(scan.seriesuid);
+    setStatus("SUCCESS");
+    setProgressStep(null);
+    setErrorMessage(null);
+    setStartedAt(null);
+    setFinishedAt(null);
+    setReport(scan.report ?? null);
+    setSelectedNodule(null);
+    setSliceIdx(0);
+    setShowOverlay(true);
+    setOverlayOpacity(0.45);
+    const catalog = await loadSliceCatalog(scan.seriesuid);
+    const initialIndices = catalog.axial?.indices ?? [];
+    setSliceIdx(initialIndices[0] ?? 0);
+  }, [loadSliceCatalog]);
+
+  // Refresh history after each successful job
+  const handleUploadSuccess = useCallback(() => { loadHistory(); }, [loadHistory]);
+
   const elapsedSeconds = startedAt
     ? Math.max(0, ((finishedAt ?? clockNow) - startedAt) / 1000)
     : null;
@@ -263,27 +296,21 @@ export default function App() {
     ? activeSliceMeta.indices[activeSliceMeta.indices.length - 1]
     : null;
 
+  // Jump to nodule slice only when the selected nodule or view changes — not on every scroll.
   useEffect(() => {
-    const indices = activeSliceMeta.indices ?? [];
-    if (indices.length === 0) {
-      if (sliceIdx !== 0) {
-        setSliceIdx(0);
-      }
-      return;
-    }
-
     if (selectedNodule?.slice_indices?.[activeView] != null) {
-      const nextSlice = resolveCandidateSlice(selectedNodule, activeView);
-      if (nextSlice !== sliceIdx) {
-        setSliceIdx(nextSlice);
-      }
-      return;
+      setSliceIdx(resolveCandidateSlice(selectedNodule, activeView));
     }
+  }, [activeView, selectedNodule]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    if (!indices.includes(sliceIdx)) {
+  // When switching views with no nodule selected, clamp to a valid slice.
+  useEffect(() => {
+    if (selectedNodule) return;
+    const indices = activeSliceMeta.indices ?? [];
+    if (indices.length > 0 && !indices.includes(sliceIdx)) {
       setSliceIdx(indices[0]);
     }
-  }, [activeView, activeSliceMeta.indices, resolveCandidateSlice, selectedNodule, sliceIdx]);
+  }, [activeView, activeSliceMeta.indices]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const baseSliceUrl = seriesuid && status === "SUCCESS"
     ? `${API}/slices/${seriesuid}/${activeView}?idx=${sliceIdx}&layer=base`
@@ -419,6 +446,49 @@ export default function App() {
               </div>
             </>
           )}
+
+          {history.filter(s => s.status === "done").length > 0 && (
+            <div style={{ padding: "0 16px 20px", borderTop: "1px solid var(--border)", paddingTop: 16 }}>
+              <SectionLabel>History</SectionLabel>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {history.filter(s => s.status === "done").map((scan) => {
+                  const isActive = scan.seriesuid === seriesuid;
+                  const date = new Date(scan.uploaded_at).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+                  const time = new Date(scan.uploaded_at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+                  const n = scan.report?.n_candidates_final ?? 0;
+                  return (
+                    <button
+                      key={scan.seriesuid}
+                      onClick={() => openScan(scan)}
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "flex-start",
+                        gap: 2,
+                        padding: "7px 10px",
+                        background: isActive ? "var(--bg-3)" : "var(--bg-2)",
+                        border: `1px solid ${isActive ? "var(--teal)" : "var(--border)"}`,
+                        borderRadius: "var(--radius)",
+                        cursor: "pointer",
+                        textAlign: "left",
+                        width: "100%",
+                      }}
+                    >
+                      <div style={{ fontSize: 10, color: "var(--text)", fontFamily: "var(--mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", width: "100%" }}>
+                        {scan.filename !== "unknown.zip" ? scan.filename : scan.seriesuid.slice(0, 8) + "…"}
+                      </div>
+                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                        <span style={{ fontSize: 9, color: "var(--text-3)", fontFamily: "var(--mono)" }}>{date} {time}</span>
+                        <span style={{ fontSize: 9, color: n > 0 ? "var(--teal)" : "var(--text-3)", fontFamily: "var(--mono)" }}>
+                          {n > 0 ? `${n} nodule${n > 1 ? "s" : ""}` : "none"}
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </aside>
 
         {/* Main viewer */}
@@ -428,7 +498,10 @@ export default function App() {
             baseSliceUrl={baseSliceUrl}
             overlaySliceUrl={overlaySliceUrl}
             sliceIdx={sliceIdx}
-            onSliceChange={setSliceIdx}
+            onSliceChange={(updater) => {
+              setSelectedNodule(null);
+              setSliceIdx(updater);
+            }}
             view={activeView}
             maxSliceIdx={maxSliceIdx}
             showOverlay={showOverlay}

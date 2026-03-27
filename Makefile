@@ -4,7 +4,7 @@ SHELL := /bin/bash
 export
 
 COMPOSE ?= docker compose
-PYTHON ?= python
+PYTHON ?= python3
 NPM ?= npm
 REDIS_URL_LOCAL ?= redis://localhost:6379/0
 API_HOST ?= 0.0.0.0
@@ -12,7 +12,10 @@ API_PORT ?= 8000
 FRONTEND_HOST ?= 0.0.0.0
 FRONTEND_PORT ?= 3000
 
-.PHONY: help redis-up redis-down redis-logs docker-up docker-down docker-logs dev-api dev-worker dev-frontend dev test test-py test-frontend test-e2e
+UID := $(shell id -u)
+GID := $(shell id -g)
+
+.PHONY: help dirs redis-up redis-down redis-logs docker-up docker-down docker-logs dev-api dev-worker dev-frontend dev test test-py test-frontend test-e2e
 
 help:
 	@echo "Available targets:"
@@ -30,6 +33,10 @@ help:
 	@echo "  make test-py         Run Python tests"
 	@echo "  make test-frontend   Run frontend unit tests"
 	@echo "  make test-e2e        Run Playwright E2E tests"
+	@echo "  make dirs            Create host volume directories (outputs, checkpoints)"
+
+dirs:
+	mkdir -p outputs checkpoints
 
 redis-up:
 	$(COMPOSE) up -d redis
@@ -40,8 +47,8 @@ redis-down:
 redis-logs:
 	$(COMPOSE) logs -f redis
 
-docker-up:
-	$(COMPOSE) up --build
+docker-up: dirs
+	UID=$(UID) GID=$(GID) $(COMPOSE) up --build
 
 docker-down:
 	$(COMPOSE) down
@@ -59,10 +66,13 @@ dev-worker:
 	CELERY_RESULT_BACKEND=$(REDIS_URL_LOCAL) \
 	$(PYTHON) -m celery -A src.webapp.tasks worker --loglevel=$${CELERY_WORKER_LOGLEVEL:-info} --concurrency=$${CELERY_WORKER_CONCURRENCY:-1}
 
-dev-frontend:
+webapp/node_modules: webapp/package.json
+	$(NPM) --prefix webapp install
+
+dev-frontend: webapp/node_modules
 	cd webapp && VITE_API_PROXY_TARGET=http://localhost:$(API_PORT) $(NPM) run dev -- --host $(FRONTEND_HOST) --port $(FRONTEND_PORT)
 
-dev:
+dev: webapp/node_modules
 	@$(MAKE) redis-up
 	@trap 'kill 0' INT TERM EXIT; \
 	CELERY_BROKER_URL=$(REDIS_URL_LOCAL) \
@@ -79,8 +89,8 @@ test: test-py test-frontend test-e2e
 test-py:
 	$(PYTHON) -m pytest -q
 
-test-frontend:
+test-frontend: webapp/node_modules
 	$(NPM) --prefix webapp test
 
-test-e2e:
+test-e2e: webapp/node_modules
 	$(NPM) --prefix webapp run test:e2e

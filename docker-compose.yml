@@ -14,6 +14,7 @@ services:
     build:
       context: .
       dockerfile: docker/api.Dockerfile
+    user: "${UID}:${GID}"
     ports:
       - "8000:8000"
     volumes:
@@ -29,6 +30,7 @@ services:
     build:
       context: .
       dockerfile: docker/worker.Dockerfile
+    user: "${UID}:${GID}"
     volumes:
       - ./checkpoints:/app/checkpoints:ro
       - ./outputs:/app/outputs
