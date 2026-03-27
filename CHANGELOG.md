@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased] — 2026-03-27
+
+### Added
+- **Scan history**: `GET /scans` endpoint lists all completed scans newest-first; `meta.json` (filename, upload timestamp) written at upload time so history survives worker restarts; frontend sidebar history panel to reopen any past scan without re-uploading
+- **MONAI bundle support**: `MONAIBundleDetectionPipeline` adapter (`src/inference/monai_bundle.py`) — DICOM → MHD → MONAI RetinaNet detection → optional FP reduction → NIfTI artefacts; activated when `MODEL_CHECKPOINT` points at a bundle directory
+
+### Fixed
+- **Critical** `src/inference/monai_bundle.py`: MONAI postprocessing `AffineBoxToWorldCoordinated` with `affine_lps_to_ras=True` negated Y a second time in world space; inverting the affine then produced negative (out-of-bounds) voxel Y coordinates, so all nodule circles were missing from slices. Fixed by reading candidate centres directly from raw `prediction["box"]` (xyzxyz voxel format, before postprocessing), bypassing the double-flip entirely
+- **Critical** `src/webapp/api.py` `_body_crop_image`: `sitk.BinaryThreshold` raised "lower threshold cannot be greater than upper threshold" for int16 pixel types when `upperThreshold=1e9` overflowed. Fixed by casting to float32 first and capping at 3072.0 HU
+- **Critical** `src/webapp/renderer.py`: overlay PNGs had alpha=0 everywhere for MONAI bundle scans because `_build_detection_maps` drew spheres using the original (buggy, out-of-bounds) voxel coordinates, leaving `confidence_map.nii.gz` all-zeros. Confidence map is now rebuilt from the corrected CSV coordinates; saliency falls back to the normalised confidence map when the saliency map is zero
+- **Major** `src/webapp/tasks.py`: FP reduction model is now optional — if `checkpoints/fp_reduction_best.ckpt` is absent the worker skips the FP stage rather than crashing
+- **Major** `src/webapp/renderer.py`: nodule circles are now drawn on the **base** PNG layer (always fully visible at 100% opacity) instead of the overlay layer; opacity slider now correctly controls only the heatmap overlay. Overlay PNG alpha is no longer baked in — signal pixels are fully opaque, empty pixels are fully transparent, and CSS opacity on the `<img>` element provides the full 0–100% slider range
+- **Major** `webapp/src/App.jsx`: clicking a finding locked scroll because a single `useEffect` set both the active slice and the nodule selection; split into two independent effects — one responds to `selectedNodule`, the other to view/slice metadata; scrolling now clears `selectedNodule` so they never conflict
+- **Minor** `src/data/__init__.py`, `src/data/preprocessing.py`: created `src.data` package with `load_mhd`, `normalise_hu`, `resample_to_isotropic`, `extract_patch` — required by both inference pipelines
+- **Minor** `webapp/src/__tests__/App.test.jsx`: updated fetch mock to handle `GET /scans` (returns `[]`); added `Array.isArray` guard in `loadHistory` so non-array API responses never crash `history.filter`
+
 ## [Unreleased] — 2026-03-22 (patch)
 
 ### Added

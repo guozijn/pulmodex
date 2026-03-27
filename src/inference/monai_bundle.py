@@ -30,12 +30,12 @@ class MONAIBundleDetectionPipeline:
     def __init__(
         self,
         bundle_dir: str | Path,
-        fp_model: torch.nn.Module,
+        fp_model: torch.nn.Module | None,
         fp_threshold: float = 0.5,
         device: str = "cpu",
     ) -> None:
         self.bundle_dir = Path(bundle_dir).resolve()
-        self.fp_model = fp_model.to(device).eval()
+        self.fp_model = fp_model.to(device).eval() if fp_model is not None else None
         self.fp_threshold = fp_threshold
         self.device = torch.device(device)
 
@@ -133,6 +133,16 @@ class MONAIBundleDetectionPipeline:
         with torch.inference_mode():
             prediction = self.inferer(inputs=[image], network=self.network, targets=None)[0]
 
+        # Grab raw voxel-space boxes BEFORE postprocessing converts them to world
+        # coordinates.  The postprocessing chain (ClipBoxToImaged →
+        # AffineBoxToWorldCoordinated → ConvertBoxModed) does not reorder boxes,
+        # so raw_boxes[i] corresponds to processed boxes[i].
+        raw_boxes_np = (
+            prediction["box"].detach().cpu().numpy()
+            if hasattr(prediction.get("box"), "detach")
+            else np.asarray(prediction.get("box", []))
+        )  # shape (N, 6), xyzxyz voxel format [x1,y1,z1,x2,y2,z2]
+
         processed = self.postprocessing({**prediction, "image": item["image"]})
         boxes = processed.get("box")
         scores = processed.get("label_scores")
@@ -144,14 +154,25 @@ class MONAIBundleDetectionPipeline:
         scores = scores.detach().cpu().numpy() if hasattr(scores, "detach") else np.asarray(scores)
 
         candidates: list[dict[str, Any]] = []
-        inv_affine = np.linalg.inv(affine_ras_xyz)
-        for box, score in zip(boxes, scores):
+        for i, (box, score) in enumerate(zip(boxes, scores)):
             coord_x, coord_y, coord_z, width_mm, height_mm, depth_mm = [float(v) for v in box.tolist()]
-            voxel_xyz = nib.affines.apply_affine(
-                inv_affine,
-                np.array([coord_x, coord_y, coord_z], dtype=np.float32),
-            ).astype(np.float32)
-            centre_zyx = np.array([voxel_xyz[2], voxel_xyz[1], voxel_xyz[0]], dtype=np.float32)
+
+            # Derive voxel-space centre directly from the raw (pre-postprocessing)
+            # box to avoid the double LPS↔RAS flip that corrupts the y coordinate.
+            if i < len(raw_boxes_np):
+                rb = raw_boxes_np[i]  # [x1,y1,z1,x2,y2,z2] in voxel (X,Y,Z)
+                vox_x = (float(rb[0]) + float(rb[3])) / 2.0
+                vox_y = (float(rb[1]) + float(rb[4])) / 2.0
+                vox_z = (float(rb[2]) + float(rb[5])) / 2.0
+            else:
+                # Fallback: invert the affine (may be inaccurate for y axis)
+                voxel_xyz = nib.affines.apply_affine(
+                    np.linalg.inv(affine_ras_xyz),
+                    np.array([coord_x, coord_y, coord_z], dtype=np.float32),
+                )
+                vox_x, vox_y, vox_z = float(voxel_xyz[0]), float(voxel_xyz[1]), float(voxel_xyz[2])
+
+            centre_zyx = np.array([vox_z, vox_y, vox_x], dtype=np.float32)
             candidates.append(
                 {
                     "coordX": coord_x,
@@ -167,6 +188,9 @@ class MONAIBundleDetectionPipeline:
         return sorted(candidates, key=lambda c: c["prob"], reverse=True)
 
     def _fp_filter(self, vol: np.ndarray, candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if self.fp_model is None:
+            return candidates
+
         kept: list[dict[str, Any]] = []
         with torch.no_grad():
             for cand in candidates:
