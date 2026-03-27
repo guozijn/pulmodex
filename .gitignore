@@ -207,9 +207,10 @@ marimo/_lsp/
 __marimo__/
 
 # Data
-/data/
-/checkpoints/
-/outputs/
+data/
+checkpoints/
+outputs/
+tests/data/
 
 # Web
 webapp/node_modules/
