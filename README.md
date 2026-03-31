@@ -78,9 +78,82 @@ cp .env.example .env
 ### Development workflow
 
 - Install the project in editable mode with `pip install -e .`
-- Use `pulmodex <subcommand>` as the primary entry point
-- Main subcommands: `train`, `evaluate`, `infer`, `export-onnx`, `generate-mock-data`, `preprocess-cache`, `dicom-to-luna16`
+- Use `pulmodex <command>` as the primary entry point
+- Main commands: `train`, `evaluate`, `infer`, `detect`, `export-onnx`, `generate-mock-data`, `preprocess-cache`, `dicom-to-luna16`
+- Detection is exposed as a grouped command namespace: `pulmodex detect <prepare|train|infer|evaluate>`
 - Run tests with `python -m pytest`
+
+### Prepare local LUNA16 data for MONAI detection
+
+The repo already includes raw LUNA16 `.mhd/.raw` scans in `data/orig_datasets`, split JSONs in `data/LUNA16_datasplit/mhd_original`, and challenge annotations in `data/evaluationScript/annotations`. The MONAI detection prep step resolves those pieces into project-local manifests with absolute scan paths.
+
+```bash
+pulmodex detect prepare \
+    --raw_data_dir data/orig_datasets \
+    --split_dir data/LUNA16_datasplit/mhd_original \
+    --output_dir data/monai_detection
+```
+
+This writes `data/monai_detection/dataset_fold*.json` and `dataset_index.json`.
+Use the grouped form `pulmodex detect ...`; the old flat forms such as `detect-prepare` are no longer supported.
+
+### Train the MONAI 3D detection model
+
+```bash
+pulmodex detect train \
+    --fold 0 \
+    --prepared_dir data/monai_detection \
+    --checkpoint checkpoints/monai_detection_fold0.pt \
+    --epochs 10 \
+    --batch_size 2 \
+    --patch_size 96 96 96
+```
+
+The training flow uses a MONAI 3D RetinaNet detector with random positive/negative crops from the prepared LUNA16 manifests.
+
+### Run MONAI 3D detection inference
+
+```bash
+pulmodex detect infer \
+    --checkpoint checkpoints/monai_detection_fold0.pt \
+    --input_dir data/orig_datasets \
+    --output_dir outputs/monai_detection
+```
+
+Each scan writes `ct_volume.nii.gz`, `seg_mask.nii.gz`, `confidence_map.nii.gz`, `saliency_map.nii.gz`, `candidates.csv`, and `report.json` under `outputs/monai_detection/<seriesuid>/`.
+
+### Evaluate MONAI 3D detection on LUNA16
+
+```bash
+pulmodex detect evaluate \
+    --checkpoint checkpoints/monai_detection_fold0.pt \
+    --fold 0 \
+    --prepared_dir data/monai_detection \
+    --output outputs/detection_eval_fold0.json
+```
+
+This runs validation-fold inference, filters excluded annotations using the official LUNA16 exclusion list, and reports CPM plus sensitivity at the standard FROC FP/scan points.
+
+### References
+
+[1] Project MONAI Tutorials, Detection workflows and examples:
+https://github.com/Project-MONAI/tutorials/tree/main/detection
+
+[2] Cardoso MJ, Li W, Brown R, et al. MONAI: An open-source framework for deep learning in healthcare.
+arXiv:2211.02701, 2022.
+https://arxiv.org/abs/2211.02701
+
+[3] Lin TY, Goyal P, Girshick R, He K, Dollar P. Focal Loss for Dense Object Detection.
+Proceedings of the IEEE International Conference on Computer Vision (ICCV), 2017.
+https://arxiv.org/abs/1708.02002
+
+[4] Lin TY, Dollar P, Girshick R, He K, Hariharan B, Belongie S. Feature Pyramid Networks for Object Detection.
+Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition (CVPR), 2017.
+https://arxiv.org/abs/1612.03144
+
+[5] Setio AAA, Traverso A, de Bel T, et al. Validation, comparison, and combination of algorithms for automatic detection of pulmonary nodules in computed tomography images: The LUNA16 challenge.
+Medical Image Analysis, 42:1-13, 2017.
+https://doi.org/10.1016/j.media.2017.06.015
 
 ### Convert DICOM to LUNA16 format
 
