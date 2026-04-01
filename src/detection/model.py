@@ -34,6 +34,7 @@ def build_detection_detector(
         conv1_t_size=7,
         conv1_t_stride=(2, 2, 2),
         pretrained=pretrained_backbone,
+        returned_layers=(1, 2, 3),
     )
     detector.set_atss_matcher(num_candidates=4, center_in_gt=False)
     detector.set_hard_negative_sampler(
@@ -59,6 +60,10 @@ def save_detection_checkpoint(
     config: dict[str, Any],
     epoch: int,
     best_metric: float,
+    optimizer: torch.optim.Optimizer | None = None,
+    scheduler: Any | None = None,
+    scaler: torch.amp.GradScaler | None = None,
+    training_state: dict[str, Any] | None = None,
 ) -> None:
     payload = {
         "model_type": "monai_detection",
@@ -67,6 +72,14 @@ def save_detection_checkpoint(
         "config": config,
         "model_state_dict": detector.network.state_dict(),
     }
+    if optimizer is not None:
+        payload["optimizer_state_dict"] = optimizer.state_dict()
+    if scheduler is not None:
+        payload["scheduler_state_dict"] = scheduler.state_dict()
+    if scaler is not None:
+        payload["scaler_state_dict"] = scaler.state_dict()
+    if training_state is not None:
+        payload["training_state"] = training_state
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(payload, path)

@@ -12,11 +12,68 @@ import numpy as np
 import pandas as pd
 import torch
 
-from src.data.preprocessing import load_mhd, normalise_hu, resample_to_isotropic
-
+from .data import load_preprocessed_detection_case
 from .io import voxel_corners_to_world_box
 
 log = logging.getLogger(__name__)
+
+
+def _iter_supported_detection_images(input_dir: str | Path) -> list[Path]:
+    input_dir = Path(input_dir)
+    paths = [path for path in input_dir.rglob("*") if path.is_file()]
+    supported = []
+    for path in paths:
+        name = path.name.lower()
+        if name.endswith(".nii") or name.endswith(".nii.gz"):
+            supported.append(path)
+    return sorted(supported)
+
+
+def _should_use_inferer(detector: Any, vol_shape: tuple[int, int, int]) -> bool:
+    inferer = getattr(detector, "inferer", None)
+    roi_size = getattr(inferer, "roi_size", None)
+    if roi_size is None:
+        return False
+    roi_size = tuple(int(v) for v in roi_size)
+    return any(dim > roi for dim, roi in zip(vol_shape, roi_size))
+
+
+def _minimum_input_shape(detector: Any) -> tuple[int, int, int] | None:
+    network = getattr(detector, "network", None)
+    size_divisible = getattr(network, "size_divisible", None)
+    if size_divisible is None:
+        return None
+    return tuple(int(v) for v in size_divisible)
+
+
+def _pad_volume_to_min_shape(
+    vol: np.ndarray,
+    min_shape_zyx: tuple[int, int, int] | None,
+) -> tuple[np.ndarray, tuple[int, int, int]]:
+    original_shape = tuple(int(v) for v in vol.shape)
+    if min_shape_zyx is None:
+        return vol, original_shape
+    target_shape = tuple(max(dim, minimum) for dim, minimum in zip(original_shape, min_shape_zyx))
+    if target_shape == original_shape:
+        return vol, original_shape
+    pad_width = [(0, target - dim) for dim, target in zip(original_shape, target_shape)]
+    padded = np.pad(vol, pad_width, mode="constant", constant_values=0.0)
+    return padded.astype(np.float32), original_shape
+
+
+def _clip_boxes_to_image_shape(
+    boxes: np.ndarray,
+    image_shape_zyx: tuple[int, int, int],
+) -> tuple[np.ndarray, np.ndarray]:
+    if boxes.size == 0:
+        return boxes.reshape(0, 6).astype(np.float32), np.zeros((0,), dtype=bool)
+    max_xyz = np.asarray(
+        [image_shape_zyx[2], image_shape_zyx[1], image_shape_zyx[0], image_shape_zyx[2], image_shape_zyx[1], image_shape_zyx[0]],
+        dtype=np.float32,
+    )
+    clipped = np.clip(boxes, 0.0, max_xyz)
+    valid = np.all(clipped[:, 3:] - clipped[:, :3] >= 1.0, axis=1)
+    return clipped[valid].astype(np.float32), valid
 
 
 def _candidate_payload(box_world: np.ndarray, score: float, box_voxel: np.ndarray) -> dict[str, Any]:
@@ -75,24 +132,43 @@ def _build_detection_maps(
 
 def infer_detection_case(
     detector: Any,
-    mhd_path: str | Path,
+    image_path: str | Path,
     output_dir: str | Path,
     device: str = "cpu",
     score_thresh: float = 0.15,
+    target_spacing: float = 1.0,
 ) -> dict[str, Any]:
-    mhd_path = Path(mhd_path)
-    seriesuid = mhd_path.stem
+    image_path = Path(image_path)
+    seriesuid = image_path.name
+    if seriesuid.endswith(".nii.gz"):
+        seriesuid = seriesuid[:-7]
+    else:
+        seriesuid = image_path.stem
     out_dir = Path(output_dir) / seriesuid
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    vol, spacing_zyx, origin_zyx = load_mhd(str(mhd_path))
-    vol, spacing_zyx = resample_to_isotropic(vol, spacing_zyx, target_spacing=1.0)
-    vol = normalise_hu(vol)
+    case = load_preprocessed_detection_case(image_path, boxes_world=None, target_spacing=target_spacing)
+    vol = np.asarray(case["image"][0], dtype=np.float32)
+    spacing_zyx = np.asarray(case["spacing_zyx"], dtype=np.float32)
+    origin_zyx = np.asarray(case["origin_zyx"], dtype=np.float32)
+    vol, original_shape_zyx = _pad_volume_to_min_shape(vol, _minimum_input_shape(detector))
 
     image = torch.from_numpy(vol[None, None, ...]).to(device)
+    use_inferer = _should_use_inferer(detector, tuple(vol.shape))
     detector.eval()
     with torch.inference_mode():
-        outputs = detector(image, use_inferer=True)[0]
+        try:
+            outputs = detector(image, use_inferer=use_inferer)[0]
+        except RuntimeError as exc:
+            if use_inferer and "split_with_sizes expects split_sizes to sum exactly" in str(exc):
+                log.warning(
+                    "Sliding-window inference failed for %s with shape %s; retrying without inferer.",
+                    seriesuid,
+                    tuple(vol.shape),
+                )
+                outputs = detector(image, use_inferer=False)[0]
+            else:
+                raise
 
     boxes = outputs.get(detector.target_box_key)
     scores = outputs.get(detector.pred_score_key)
@@ -104,6 +180,8 @@ def infer_detection_case(
         scores = scores.detach().cpu().numpy()
     else:
         scores = np.asarray(scores if scores is not None else [])
+    boxes, valid_box_mask = _clip_boxes_to_image_shape(np.asarray(boxes), original_shape_zyx)
+    scores = scores[valid_box_mask] if len(valid_box_mask) else np.asarray(scores[:0])
 
     candidates: list[dict[str, Any]] = []
     for box_voxel, score in zip(boxes, scores):
@@ -113,10 +191,11 @@ def infer_detection_case(
         candidates.append(_candidate_payload(box_world, float(score), np.asarray(box_voxel)))
 
     candidates.sort(key=lambda item: item["prob"], reverse=True)
-    seg_mask, confidence_map = _build_detection_maps(tuple(vol.shape), candidates, spacing_zyx)
+    output_vol = vol[: original_shape_zyx[0], : original_shape_zyx[1], : original_shape_zyx[2]]
+    seg_mask, confidence_map = _build_detection_maps(original_shape_zyx, candidates, spacing_zyx)
     affine = np.diag(list(spacing_zyx[::-1]) + [1.0])
 
-    nib.save(nib.Nifti1Image(vol.astype(np.float32), affine), str(out_dir / "ct_volume.nii.gz"))
+    nib.save(nib.Nifti1Image(output_vol.astype(np.float32), affine), str(out_dir / "ct_volume.nii.gz"))
     nib.save(nib.Nifti1Image(seg_mask, affine), str(out_dir / "seg_mask.nii.gz"))
     nib.save(nib.Nifti1Image(confidence_map, affine), str(out_dir / "confidence_map.nii.gz"))
     nib.save(nib.Nifti1Image(np.zeros_like(vol, dtype=np.float32), affine), str(out_dir / "saliency_map.nii.gz"))
@@ -154,17 +233,19 @@ def infer_detection_directory(
     output_dir: str | Path,
     device: str = "cpu",
     score_thresh: float = 0.15,
+    target_spacing: float = 1.0,
 ) -> list[dict[str, Any]]:
     reports = []
-    for mhd_path in sorted(Path(input_dir).rglob("*.mhd")):
-        log.info("Running 3D detection inference for %s", mhd_path.name)
+    for image_path in _iter_supported_detection_images(input_dir):
+        log.info("Running 3D detection inference for %s", image_path.name)
         reports.append(
             infer_detection_case(
                 detector=detector,
-                mhd_path=mhd_path,
+                image_path=image_path,
                 output_dir=output_dir,
                 device=device,
                 score_thresh=score_thresh,
+                target_spacing=target_spacing,
             )
         )
     return reports

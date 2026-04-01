@@ -12,7 +12,7 @@ import pandas as pd
 from src.evaluation.froc import compute_froc
 
 from .infer import infer_detection_case
-from .io import load_prepared_split
+from .io import load_prepared_split, seriesuid_from_image_path
 
 
 def _filter_excluded_predictions(
@@ -45,13 +45,14 @@ def _filter_excluded_predictions(
 def evaluate_detection_model(
     detector: Any,
     fold: int = 0,
-    prepared_dir: str | Path = "data/monai_detection",
+    prepared_dir: str | Path = "data/monai_detection_nifti_prepared",
     output_path: str | Path = "outputs/detection_eval_fold0.json",
     annotations_path: str | Path = "data/evaluationScript/annotations/annotations.csv",
     excluded_annotations_path: str | Path = "data/evaluationScript/annotations/annotations_excluded.csv",
     inference_output_dir: str | Path = "outputs/detection_eval_cases",
     device: str = "cpu",
     score_thresh: float = 0.15,
+    target_spacing: float = 1.0,
 ) -> dict[str, Any]:
     split = load_prepared_split(fold, prepared_dir)
     validation_items = split["validation"]
@@ -60,12 +61,13 @@ def evaluate_detection_model(
     for item in validation_items:
         report = infer_detection_case(
             detector=detector,
-            mhd_path=item["image"],
+            image_path=item["image"],
             output_dir=inference_output_dir,
             device=device,
             score_thresh=score_thresh,
+            target_spacing=target_spacing,
         )
-        seriesuid = Path(item["image"]).stem
+        seriesuid = seriesuid_from_image_path(item["image"])
         for cand in report["candidates"]:
             predictions.append(
                 {
@@ -78,7 +80,7 @@ def evaluate_detection_model(
             )
 
     ann_df = pd.read_csv(annotations_path)
-    ann_df = ann_df[ann_df["seriesuid"].isin([Path(item["image"]).stem for item in validation_items])]
+    ann_df = ann_df[ann_df["seriesuid"].isin([seriesuid_from_image_path(item["image"]) for item in validation_items])]
     excluded_df = pd.read_csv(excluded_annotations_path)
     predictions = _filter_excluded_predictions(predictions, excluded_df)
     pred_list = [

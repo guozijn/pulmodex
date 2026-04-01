@@ -157,6 +157,25 @@ export default function App() {
   const [history, setHistory] = useState([]);
   const pollRef = useRef(null);
 
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) {
+      window.clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }, []);
+
+  const resetScanState = useCallback(() => {
+    setSeriesuid(null);
+    setReport(null);
+    setSelectedNodule(null);
+    setSliceCatalog({});
+    setSliceIdx(0);
+    setShowOverlay(true);
+    setOverlayOpacity(0.45);
+  }, []);
+
+  useEffect(() => stopPolling, [stopPolling]);
+
   useEffect(() => {
     if (!startedAt || finishedAt || !["PENDING", "PROGRESS"].includes(status ?? "")) {
       return undefined;
@@ -193,6 +212,9 @@ export default function App() {
     return nextCatalog;
   }, []);
 
+  // Refresh history after each successful job
+  const handleUploadSuccess = useCallback(() => { loadHistory(); }, [loadHistory]);
+
   const resolveCandidateSlice = useCallback((candidate, view, catalog = sliceCatalog) => {
     const preferred = candidate?.slice_indices?.[view];
     const indices = catalog?.[view]?.indices ?? [];
@@ -206,7 +228,7 @@ export default function App() {
   }, [sliceCatalog]);
 
   const handleUpload = useCallback(async (file) => {
-    clearInterval(pollRef.current);
+    stopPolling();
     try {
       const form = new FormData();
       form.append("file", file);
@@ -225,35 +247,46 @@ export default function App() {
       setStartedAt(now);
       setFinishedAt(null);
       setClockNow(now);
-      setReport(null);
-      setSelectedNodule(null);
-      setSliceCatalog({});
-      setSliceIdx(0);
-      setShowOverlay(true);
-      setOverlayOpacity(0.45);
+      resetScanState();
+      setSeriesuid(data.seriesuid);
 
       pollRef.current = setInterval(async () => {
-        const r = await fetch(`${API}/status/${data.job_id}`);
-        const s = await r.json();
-        setStatus(s.state);
-        setProgressStep(s.progress?.step ?? null);
-        setErrorMessage(s.error ?? null);
-        if (s.state === "SUCCESS") {
-          clearInterval(pollRef.current);
-          setFinishedAt((prev) => prev ?? Date.now());
-          setReport(s.result?.report ?? null);
-          const rr = await fetch(`${API}/report/${data.seriesuid}`);
-          if (rr.ok) setReport(await rr.json());
-          const catalog = await loadSliceCatalog(data.seriesuid);
-          const initialIndices = catalog.axial?.indices ?? [];
-          setSliceIdx(initialIndices[0] ?? 0);
-          handleUploadSuccess();
-        } else if (s.state === "FAILURE") {
-          clearInterval(pollRef.current);
+        try {
+          const r = await fetch(`${API}/status/${data.job_id}`);
+          if (!r.ok) {
+            throw new Error(`Status request failed (${r.status})`);
+          }
+          const s = await r.json();
+          setStatus(s.state);
+          setProgressStep(s.progress?.step ?? null);
+          setErrorMessage(s.error ?? null);
+          if (s.state === "SUCCESS") {
+            stopPolling();
+            setFinishedAt((prev) => prev ?? Date.now());
+            setReport(s.result?.report ?? null);
+            const rr = await fetch(`${API}/report/${data.seriesuid}`);
+            if (!rr.ok) {
+              throw new Error(`Report request failed (${rr.status})`);
+            }
+            setReport(await rr.json());
+            const catalog = await loadSliceCatalog(data.seriesuid);
+            const initialIndices = catalog.axial?.indices ?? [];
+            setSliceIdx(initialIndices[0] ?? 0);
+            handleUploadSuccess();
+          } else if (s.state === "FAILURE") {
+            stopPolling();
+            setFinishedAt((prev) => prev ?? Date.now());
+          }
+        } catch (error) {
+          stopPolling();
+          setStatus("FAILURE");
+          setProgressStep(null);
+          setErrorMessage(error instanceof Error ? error.message : "Polling failed");
           setFinishedAt((prev) => prev ?? Date.now());
         }
       }, 2000);
     } catch (error) {
+      stopPolling();
       setStatus("FAILURE");
       setProgressStep(null);
       setErrorMessage(error instanceof Error ? error.message : "Upload failed");
@@ -261,12 +294,12 @@ export default function App() {
       setStartedAt((prev) => prev ?? now);
       setFinishedAt(now);
       setClockNow(now);
-      setReport(null);
+      resetScanState();
     }
-  }, [loadSliceCatalog]);
+  }, [handleUploadSuccess, loadSliceCatalog, resetScanState, stopPolling]);
 
   const openScan = useCallback(async (scan) => {
-    clearInterval(pollRef.current);
+    stopPolling();
     setJobId(null);
     setSeriesuid(scan.seriesuid);
     setStatus("SUCCESS");
@@ -282,10 +315,7 @@ export default function App() {
     const catalog = await loadSliceCatalog(scan.seriesuid);
     const initialIndices = catalog.axial?.indices ?? [];
     setSliceIdx(initialIndices[0] ?? 0);
-  }, [loadSliceCatalog]);
-
-  // Refresh history after each successful job
-  const handleUploadSuccess = useCallback(() => { loadHistory(); }, [loadHistory]);
+  }, [loadSliceCatalog, stopPolling]);
 
   const elapsedSeconds = startedAt
     ? Math.max(0, ((finishedAt ?? clockNow) - startedAt) / 1000)

@@ -22,6 +22,7 @@ describe("UploadZone", () => {
     const file = new File(["data"], "scan.zip", { type: "application/zip" });
     await userEvent.upload(input, file);
     expect(onUpload).toHaveBeenCalledWith(file);
+    expect(input.value).toBe("");
   });
 
   it("calls onUpload with dropped file when not disabled", () => {

@@ -211,6 +211,7 @@ data/
 checkpoints/
 outputs/
 tests/data/
+logs/
 
 # Web
 webapp/node_modules/

@@ -27,6 +27,7 @@ export default function UploadZone({ onUpload, disabled }) {
   const handleChange = (e) => {
     const file = e.target.files[0];
     if (file) onUpload(file);
+    e.target.value = "";
   };
 
   return (
