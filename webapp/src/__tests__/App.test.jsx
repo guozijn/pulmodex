@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, afterEach } from "vitest";
 import App from "../App";
@@ -107,5 +107,102 @@ describe("App", () => {
 
     await waitFor(() => expect(screen.getByText("Failed")).toBeInTheDocument(), { timeout: 4000 });
     expect(screen.getByText("Please provide ground truth targets during training.")).toBeInTheDocument();
+  });
+
+  it("clears previous scan metadata when a new upload request fails", async () => {
+    vi.spyOn(window, "setInterval").mockReturnValue(99);
+    vi.spyOn(window, "clearInterval").mockImplementation(() => {});
+
+    const historyScan = {
+      seriesuid: "existing-series",
+      filename: "existing.zip",
+      uploaded_at: "2026-04-01T12:00:00Z",
+      status: "done",
+      report: { n_candidates_final: 0, top_candidates: [] },
+    };
+
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url) => {
+      if (url.includes("/scans")) {
+        return Promise.resolve({ ok: true, json: async () => [historyScan] });
+      }
+      if (url.includes("/slices/existing-series/")) {
+        return Promise.resolve({ ok: true, json: async () => ({ view: "axial", indices: [0, 1], count: 2 }) });
+      }
+      if (url.includes("/predict")) {
+        return Promise.resolve({ ok: false, json: async () => ({ detail: "Only .zip uploads are supported" }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("History")).toBeInTheDocument());
+    await userEvent.click(screen.getByRole("button", { name: /existing\.zip/i }));
+    await waitFor(() => expect(screen.getByText("Series UID")).toBeInTheDocument());
+    expect(screen.getByText("existing-series")).toBeInTheDocument();
+
+    const input = document.querySelector("input[type='file']");
+    await userEvent.upload(input, new File(["bad"], "bad.zip", { type: "application/zip" }));
+
+    await waitFor(() => expect(screen.getByText("Failed")).toBeInTheDocument());
+    expect(screen.queryByText("Series UID")).not.toBeInTheDocument();
+    expect(screen.queryByText("existing-series")).not.toBeInTheDocument();
+  });
+
+  it("surfaces polling request failures instead of hanging in progress", async () => {
+    const intervals = [];
+    vi.spyOn(window, "setInterval").mockImplementation((callback, delay) => {
+      intervals.push({ callback, delay });
+      return intervals.length;
+    });
+    vi.spyOn(window, "clearInterval").mockImplementation(() => {});
+
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url) => {
+      if (url.includes("/predict")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ job_id: "job-poll-error", seriesuid: "series-poll-error" }),
+        });
+      }
+      if (url.includes("/status")) {
+        return Promise.resolve({ ok: false, status: 503, json: async () => ({}) });
+      }
+      return Promise.resolve({ ok: true, json: async () => [] });
+    }));
+
+    render(<App />);
+    const input = document.querySelector("input[type='file']");
+    await userEvent.upload(input, new File(["data"], "scan.zip", { type: "application/zip" }));
+
+    const pollInterval = intervals.find(({ delay }) => delay === 2000);
+    await act(async () => {
+      await pollInterval.callback();
+    });
+
+    await waitFor(() => expect(screen.getByText("Failed")).toBeInTheDocument());
+    expect(screen.getByText("Status request failed (503)")).toBeInTheDocument();
+  });
+
+  it("clears the polling timer when the component unmounts", async () => {
+    const clearIntervalSpy = vi.spyOn(window, "clearInterval").mockImplementation(() => {});
+    vi.spyOn(window, "setInterval").mockReturnValue(123);
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url) => {
+      if (url.includes("/predict")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ job_id: "job-unmount", seriesuid: "series-unmount" }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => [] });
+    }));
+
+    const { unmount } = render(<App />);
+    const input = document.querySelector("input[type='file']");
+    await userEvent.upload(input, new File(["data"], "scan.zip", { type: "application/zip" }));
+
+    await waitFor(() => expect(screen.getByText("Queued…")).toBeInTheDocument());
+    unmount();
+
+    expect(clearIntervalSpy).toHaveBeenCalledWith(123);
   });
 });

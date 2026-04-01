@@ -14,21 +14,36 @@ from src.detection.io import (
 
 
 def test_prepare_luna16_detection_splits_resolves_absolute_paths(tmp_path: Path) -> None:
-    raw_dir = tmp_path / "raw"
-    raw_dir.mkdir()
-    (raw_dir / "case_a.mhd").write_text("ObjectType = Image")
+    standardized_dir = tmp_path / "standardized"
+    images_dir = standardized_dir / "images"
+    images_dir.mkdir(parents=True)
+    image_path = images_dir / "case_a.nii.gz"
+    image_path.write_text("fake nii")
+    payload = {
+        "items": [
+            {
+                "seriesuid": "case_a",
+                "source_path": str((tmp_path / "subset0" / "case_a.mhd").resolve()),
+                "image": str(image_path.resolve()),
+            }
+        ]
+    }
+    (standardized_dir / "dataset_index.json").write_text(json.dumps(payload))
 
-    split_dir = tmp_path / "splits"
-    split_dir.mkdir()
-    payload = {"training": [{"image": "case_a.mhd", "box": [], "label": []}], "validation": []}
-    (split_dir / "dataset_fold0.json").write_text(json.dumps(payload))
+    annotations_path = tmp_path / "annotations.csv"
+    annotations_path.write_text("seriesuid,coordX,coordY,coordZ,diameter_mm\n")
 
-    written = prepare_luna16_detection_splits(raw_data_dir=raw_dir, split_dir=split_dir, output_dir=tmp_path / "out")
+    written = prepare_luna16_detection_splits(
+        standardized_dir=standardized_dir,
+        annotations_path=annotations_path,
+        output_dir=tmp_path / "out",
+    )
 
     assert len(written) == 1
     prepared = json.loads((tmp_path / "out" / "dataset_fold0.json").read_text())
-    assert Path(prepared["training"][0]["image"]).is_absolute()
-    assert prepared["training"][0]["image"].endswith("case_a.mhd")
+    assert prepared["validation"]
+    assert Path(prepared["validation"][0]["image"]).is_absolute()
+    assert prepared["validation"][0]["image"].endswith("case_a.nii.gz")
 
 
 def test_world_box_round_trip_preserves_geometry() -> None:

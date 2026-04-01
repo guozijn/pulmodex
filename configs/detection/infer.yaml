@@ -1,0 +1,5 @@
+checkpoint: checkpoints/monai_detection_fold0.pt
+input_dir: data/monai_detection_nifti/images
+output_dir: outputs/monai_detection
+score_thresh: 0.15
+device: null

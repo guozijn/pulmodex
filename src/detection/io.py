@@ -2,71 +2,296 @@
 
 from __future__ import annotations
 
+import csv
+import hashlib
 import json
+import logging
+import re
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+import SimpleITK as sitk
 
-from src.data.preprocessing import load_mhd
+from src.data.preprocessing import load_image_volume
+
+_SUPPORTED_IMAGE_SUFFIXES = (".nii", ".nii.gz")
+_SUBSET_PATTERN = re.compile(r"subset(\d+)", re.IGNORECASE)
+log = logging.getLogger(__name__)
 
 
-def _image_map(raw_data_dir: str | Path) -> dict[str, Path]:
-    raw_data_dir = Path(raw_data_dir)
-    return {path.name: path.resolve() for path in raw_data_dir.rglob("*.mhd")}
+def _is_supported_image(path: Path) -> bool:
+    name = path.name.lower()
+    return name.endswith(_SUPPORTED_IMAGE_SUFFIXES)
 
 
-def _resolve_item(item: dict[str, Any], image_lookup: dict[str, Path]) -> dict[str, Any]:
-    resolved = dict(item)
-    image_name = Path(item["image"]).name
-    if image_name not in image_lookup:
-        raise FileNotFoundError(f"Could not resolve {image_name} under raw data directory.")
-    resolved["image"] = str(image_lookup[image_name])
-    return resolved
+def _resolve_standardized_root(path: str | Path) -> Path:
+    path = Path(path)
+    if (path / "dataset_index.json").exists():
+        return path
+    if path.name == "images" and (path.parent / "dataset_index.json").exists():
+        return path.parent
+    raise FileNotFoundError(
+        f"Could not find dataset_index.json under {path}. Run `pulmodex detect standardize` first."
+    )
+
+
+def _load_annotations_by_seriesuid(annotations_path: str | Path) -> dict[str, list[list[float]]]:
+    grouped: dict[str, list[list[float]]] = {}
+    with Path(annotations_path).open(newline="") as handle:
+        reader = csv.DictReader(handle)
+        required = {"seriesuid", "coordX", "coordY", "coordZ", "diameter_mm"}
+        if reader.fieldnames is None or not required.issubset(set(reader.fieldnames)):
+            raise ValueError(f"{annotations_path} is missing required columns: {sorted(required)}")
+        for row in reader:
+            diameter = float(row["diameter_mm"])
+            grouped.setdefault(str(row["seriesuid"]), []).append(
+                [
+                    float(row["coordX"]),
+                    float(row["coordY"]),
+                    float(row["coordZ"]),
+                    diameter,
+                    diameter,
+                    diameter,
+                ]
+            )
+    return grouped
+
+
+def _subset_id_from_source_path(source_path: str | Path) -> int | None:
+    source_path = Path(source_path)
+    for part in source_path.parts:
+        match = _SUBSET_PATTERN.fullmatch(part)
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def _build_detection_item(image_path: str, boxes_world: list[list[float]]) -> dict[str, Any]:
+    return {
+        "image": image_path,
+        "box": boxes_world,
+        "label": [0 for _ in boxes_world],
+    }
 
 
 def prepare_luna16_detection_splits(
-    raw_data_dir: str | Path = "data/orig_datasets",
-    split_dir: str | Path = "data/LUNA16_datasplit/mhd_original",
-    output_dir: str | Path = "data/monai_detection",
+    standardized_dir: str | Path = "data/monai_detection_nifti",
+    annotations_path: str | Path = "data/evaluationScript/annotations/annotations.csv",
+    output_dir: str | Path = "data/monai_detection_nifti_prepared",
 ) -> list[Path]:
-    """Resolve raw MHD paths in the existing LUNA16 split files.
+    """Create fold manifests from standardized LUNA16 NIfTI volumes and annotations.
 
-    The upstream MONAI detection tutorial uses env files that point to the raw
-    LUNA16 scans and fold JSONs. This helper makes those fold files directly
-    usable from the current project by replacing relative image names with
-    absolute local paths.
+    This mirrors the subset-based split logic used by LUNA16/nnDetection:
+    validation fold ``i`` corresponds to scans from ``subset{i}``, and the
+    training split is the union of the remaining discovered subsets.
     """
 
-    split_dir = Path(split_dir)
+    standardized_root = _resolve_standardized_root(standardized_dir)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    image_lookup = _image_map(raw_data_dir)
+    payload = json.loads((standardized_root / "dataset_index.json").read_text())
+    annotations_by_series = _load_annotations_by_seriesuid(annotations_path)
+
+    items_by_subset: dict[int, list[dict[str, Any]]] = {}
+    skipped: list[str] = []
+    for item in payload.get("items", []):
+        image_path = Path(item["image"])
+        if not _is_supported_image(image_path):
+            continue
+        subset_id = _subset_id_from_source_path(item.get("source_path", ""))
+        if subset_id is None:
+            skipped.append(str(item.get("source_path", image_path)))
+            continue
+        seriesuid = str(item["seriesuid"])
+        boxes_world = annotations_by_series.get(seriesuid, [])
+        items_by_subset.setdefault(subset_id, []).append(
+            _build_detection_item(str(image_path.resolve()), boxes_world)
+        )
+
+    if not items_by_subset:
+        raise ValueError(
+            "No subset-aware standardized images were found. Expected source paths to contain subset0..subset9."
+        )
+    if skipped:
+        log.warning("Skipped %d standardized image(s) without subset information.", len(skipped))
 
     written: list[Path] = []
-    for source in sorted(split_dir.glob("dataset_fold*.json")):
-        payload = json.loads(source.read_text())
-        resolved = {
-            key: [_resolve_item(item, image_lookup) for item in value]
-            for key, value in payload.items()
-        }
-        dest = output_dir / source.name
+    subset_ids = sorted(items_by_subset)
+    for fold in subset_ids:
+        validation = list(items_by_subset.get(fold, []))
+        training = [item for subset_id, subset_items in items_by_subset.items() if subset_id != fold for item in subset_items]
+        resolved = {"training": training, "validation": validation}
+        dest = output_dir / f"dataset_fold{fold}.json"
         dest.write_text(json.dumps(resolved, indent=2))
         written.append(dest)
 
     metadata = {
-        "raw_data_dir": str(Path(raw_data_dir).resolve()),
-        "source_split_dir": str(split_dir.resolve()),
+        "standardized_dir": str(standardized_root.resolve()),
+        "annotations_path": str(Path(annotations_path).resolve()),
         "prepared_split_dir": str(output_dir.resolve()),
         "num_split_files": len(written),
+        "subset_ids": subset_ids,
+        "num_images": int(sum(len(items) for items in items_by_subset.values())),
+        "num_annotation_series": int(len(annotations_by_series)),
+        "skipped_without_subset": skipped,
     }
     (output_dir / "dataset_index.json").write_text(json.dumps(metadata, indent=2))
     return written
 
 
+def _discover_mhd_sources(input_dir: str | Path) -> list[Path]:
+    return sorted(Path(input_dir).rglob("*.mhd"))
+
+
+def _discover_dicom_series_dirs(input_dir: str | Path) -> list[Path]:
+    series_dirs: list[Path] = []
+    for path in sorted(Path(input_dir).rglob("*")):
+        if not path.is_dir():
+            continue
+        try:
+            files = [child for child in path.iterdir() if child.is_file()]
+        except PermissionError:
+            continue
+        if files and any(child.suffix.lower() == ".dcm" for child in files):
+            series_dirs.append(path)
+    return series_dirs
+
+
+def _load_dicom_series_image(series_dir: Path) -> sitk.Image:
+    reader = sitk.ImageSeriesReader()
+    series_ids = list(reader.GetGDCMSeriesIDs(str(series_dir)))
+    if series_ids:
+        file_names = reader.GetGDCMSeriesFileNames(str(series_dir), series_ids[0])
+        reader.SetFileNames(file_names)
+        return reader.Execute()
+
+    file_names = sorted(str(path) for path in series_dir.glob("*.dcm"))
+    if not file_names:
+        raise FileNotFoundError(f"No DICOM files found under {series_dir}")
+    reader.SetFileNames(file_names)
+    return reader.Execute()
+
+
+def _sanitize_seriesuid(value: str) -> str:
+    sanitized = re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("._")
+    return sanitized or "series"
+
+
+def _dicom_series_uid(series_dir: Path) -> str:
+    reader = sitk.ImageSeriesReader()
+    series_ids = list(reader.GetGDCMSeriesIDs(str(series_dir)))
+    if series_ids:
+        return _sanitize_seriesuid(str(series_ids[0]))
+    digest = hashlib.sha1(str(series_dir.resolve()).encode("utf-8")).hexdigest()[:12]
+    return _sanitize_seriesuid(f"{series_dir.name}_{digest}")
+
+
+def _seriesuid_for_source(source: Path, source_format: str) -> str:
+    if source_format == "mhd":
+        return _sanitize_seriesuid(source.stem)
+    return _dicom_series_uid(source)
+
+
+def _unique_seriesuid(seriesuid: str, source: Path, used_seriesuids: set[str]) -> str:
+    if seriesuid not in used_seriesuids:
+        used_seriesuids.add(seriesuid)
+        return seriesuid
+    digest = hashlib.sha1(str(source.resolve()).encode("utf-8")).hexdigest()[:12]
+    unique = _sanitize_seriesuid(f"{seriesuid}_{digest}")
+    used_seriesuids.add(unique)
+    return unique
+
+
+def prepare_detection_inputs_as_nifti(
+    input_dir: str | Path,
+    output_dir: str | Path = "data/monai_detection_nifti",
+    source_format: str = "auto",
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    """Standardize raw MHD or DICOM inputs into compressed NIfTI volumes.
+
+    The output directory contains:
+    - ``images/<seriesuid>.nii.gz`` for each discovered scan
+    - ``dataset_index.json`` with a manifest of converted files
+    """
+
+    input_dir = Path(input_dir)
+    output_dir = Path(output_dir)
+    images_dir = output_dir / "images"
+    images_dir.mkdir(parents=True, exist_ok=True)
+
+    if source_format not in {"auto", "mhd", "dicom"}:
+        raise ValueError("source_format must be one of: auto, mhd, dicom")
+
+    resolved_format = source_format
+    if source_format == "auto":
+        mhd_sources = _discover_mhd_sources(input_dir)
+        dicom_sources = _discover_dicom_series_dirs(input_dir)
+        if mhd_sources:
+            resolved_format = "mhd"
+            sources: list[Path] = mhd_sources
+        elif dicom_sources:
+            resolved_format = "dicom"
+            sources = dicom_sources
+        else:
+            raise FileNotFoundError(f"No .mhd files or DICOM series were found under {input_dir}")
+    elif source_format == "mhd":
+        sources = _discover_mhd_sources(input_dir)
+    else:
+        sources = _discover_dicom_series_dirs(input_dir)
+
+    if not sources:
+        raise FileNotFoundError(f"No {resolved_format} sources were found under {input_dir}")
+
+    if limit is not None:
+        sources = sources[: max(int(limit), 0)]
+
+    manifest: list[dict[str, Any]] = []
+    used_seriesuids: set[str] = set()
+    for source in sources:
+        seriesuid = _unique_seriesuid(_seriesuid_for_source(source, resolved_format), source, used_seriesuids)
+        output_path = images_dir / f"{seriesuid}.nii.gz"
+        if resolved_format == "mhd":
+            image = sitk.ReadImage(str(source))
+        else:
+            image = _load_dicom_series_image(source)
+        sitk.WriteImage(image, str(output_path), useCompression=True)
+        manifest.append(
+            {
+                "seriesuid": seriesuid,
+                "source_format": resolved_format,
+                "source_path": str(source.resolve()),
+                "image": str(output_path.resolve()),
+                "spacing_xyz": [float(v) for v in image.GetSpacing()],
+                "origin_xyz": [float(v) for v in image.GetOrigin()],
+                "direction": [float(v) for v in image.GetDirection()],
+                "size_xyz": [int(v) for v in image.GetSize()],
+            }
+        )
+
+    index = {
+        "input_dir": str(input_dir.resolve()),
+        "output_dir": str(output_dir.resolve()),
+        "source_format": resolved_format,
+        "num_images": len(manifest),
+        "items": manifest,
+    }
+    (output_dir / "dataset_index.json").write_text(json.dumps(index, indent=2))
+    return manifest
+
+
+def seriesuid_from_image_path(image_path: str | Path) -> str:
+    image_path = Path(image_path)
+    name = image_path.name
+    if name.endswith(".nii.gz"):
+        return name[:-7]
+    return image_path.stem
+
+
 def load_prepared_split(
     fold: int,
-    prepared_dir: str | Path = "data/monai_detection",
+    prepared_dir: str | Path = "data/monai_detection_nifti_prepared",
 ) -> dict[str, list[dict[str, Any]]]:
     path = Path(prepared_dir) / f"dataset_fold{fold}.json"
     if not path.exists():
@@ -118,7 +343,7 @@ def load_detection_case(
 ) -> dict[str, Any]:
     """Load a raw LUNA16 case and convert world-space boxes to voxel corners."""
 
-    vol, spacing_zyx, origin_zyx = load_mhd(str(image_path))
+    vol, spacing_zyx, origin_zyx = load_image_volume(str(image_path))
     boxes_voxel = np.asarray(
         [world_box_to_voxel_corners(np.asarray(box), spacing_zyx, origin_zyx) for box in boxes_world],
         dtype=np.float32,

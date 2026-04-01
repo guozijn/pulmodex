@@ -11,15 +11,15 @@ _HU_MIN = -1000.0
 _HU_MAX = 400.0
 
 
-def load_mhd(mhd_path: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Load a .mhd/.raw CT volume via SimpleITK.
+def load_image_volume(image_path: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Load a medical image volume via SimpleITK.
 
     Returns:
         vol:     float32 array (Z, Y, X) in Hounsfield units
         spacing: float32 array (Z, Y, X) voxel spacing in mm
         origin:  float32 array (Z, Y, X) world origin in mm
     """
-    image = sitk.ReadImage(str(mhd_path))
+    image = sitk.ReadImage(str(image_path))
     vol_xyz = sitk.GetArrayFromImage(image).astype(np.float32)  # (Z, Y, X)
     spacing_xyz = np.array(image.GetSpacing(), dtype=np.float32)  # (X, Y, Z)
     origin_xyz = np.array(image.GetOrigin(), dtype=np.float32)   # (X, Y, Z)
@@ -28,6 +28,12 @@ def load_mhd(mhd_path: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     spacing_zyx = spacing_xyz[::-1].copy()
     origin_zyx = origin_xyz[::-1].copy()
     return vol_xyz, spacing_zyx, origin_zyx
+
+
+def load_mhd(mhd_path: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Load a .mhd/.raw CT volume via SimpleITK."""
+
+    return load_image_volume(mhd_path)
 
 
 def normalise_hu(vol: np.ndarray) -> np.ndarray:
