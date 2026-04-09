@@ -6,6 +6,9 @@ All notable changes to this project will be documented in this file.
 
 ### Removed
 - `detect` CLI command group (`standardize`, `prepare`, `infer`, `evaluate`) removed entirely; the MONAI detection workflow is no longer exposed via the CLI.
+- `src/detection/` module and all `src/detect_*.py` entry-point scripts deleted.
+- `configs/detection/` directory (train, infer, evaluate YAML configs) deleted.
+- `tests/detection/` deleted.
 
 ## [Unreleased] — 2026-03-27
 

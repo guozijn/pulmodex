@@ -1,9 +1,0 @@
-checkpoint: checkpoints/monai_detection_fold0.pt
-fold: 0
-prepared_dir: data/monai_detection_nifti_prepared
-output: outputs/detection_eval_fold0.json
-inference_output_dir: outputs/detection_eval_cases
-annotations: data/evaluationScript/annotations/annotations.csv
-excluded_annotations: data/evaluationScript/annotations/annotations_excluded.csv
-score_thresh: 0.15
-device: null
