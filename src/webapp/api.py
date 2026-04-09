@@ -267,15 +267,15 @@ async def get_slices(uid: str, view: str, idx: int = 0, layer: str = "composite"
         uid: seriesuid
         view: axial | coronal | sagittal
         idx: slice index
-        layer: composite | base | overlay
+        layer: composite | raw | base | overlay
 
     Returns:
         PNG image response
     """
     if view not in ("axial", "coronal", "sagittal"):
         raise HTTPException(400, "view must be axial|coronal|sagittal")
-    if layer not in ("composite", "base", "overlay"):
-        raise HTTPException(400, "layer must be composite|base|overlay")
+    if layer not in ("composite", "raw", "base", "overlay"):
+        raise HTTPException(400, "layer must be composite|raw|base|overlay")
 
     filename = (
         f"{view}_{idx:04d}.png"

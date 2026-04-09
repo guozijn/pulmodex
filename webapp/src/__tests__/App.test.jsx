@@ -13,6 +13,10 @@ function getHistoryOpenButton(name) {
   return screen.getAllByRole("button").find((button) => button.textContent?.includes(name) && !button.getAttribute("aria-label"));
 }
 
+function getLabeledToggle(label, name) {
+  return screen.getAllByRole("button", { name }).find((button) => button.parentElement?.textContent?.includes(label));
+}
+
 describe("App", () => {
   it("renders the application header", () => {
     render(<App />);
@@ -80,13 +84,41 @@ describe("App", () => {
         { timeout: 4000 },
       );
       expect(screen.getByText("Heatmap overlay")).toBeInTheDocument();
-      const toggle = screen.getByRole("button", { name: "OFF" });
+      const toggle = getLabeledToggle("Heatmap overlay", "OFF");
       expect(toggle).toBeInTheDocument();
       await userEvent.click(toggle);
-      expect(screen.getByRole("button", { name: "ON" })).toBeInTheDocument();
+      expect(getLabeledToggle("Heatmap overlay", "ON")).toBeInTheDocument();
     },
     6000,
   );
+
+  it("switches to raw CT when annotations are hidden", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url) => {
+      if (url.includes("/predict")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ job_id: "job-raw", seriesuid: "series-raw" }) });
+      }
+      if (url.includes("/status")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ state: "SUCCESS", result: {} }) });
+      }
+      if (url.includes("/slices/")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ view: "axial", indices: [0, 1], count: 2 }) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ top_candidates: [] }) });
+    }));
+
+    render(<App />);
+    const input = document.querySelector("input[type='file']");
+    await userEvent.upload(input, new File(["d"], "scan.zip", { type: "application/zip" }));
+
+    await waitFor(() => expect(screen.getByText("Complete")).toBeInTheDocument(), { timeout: 4000 });
+    const img = screen.getByRole("img", { name: "slice 0" });
+    expect(img).toHaveAttribute("src", "/api/slices/series-raw/axial?idx=0&layer=base");
+
+    const annotationsToggle = getLabeledToggle("Annotations", "ON");
+    await userEvent.click(annotationsToggle);
+
+    expect(screen.getByRole("img", { name: "slice 0" })).toHaveAttribute("src", "/api/slices/series-raw/axial?idx=0&layer=raw");
+  });
 
   it("shows backend failure details when polling returns FAILURE", async () => {
     vi.stubGlobal("fetch", vi.fn().mockImplementation((url) => {
@@ -143,11 +175,13 @@ describe("App", () => {
 
     render(<App />);
 
-    await waitFor(() => expect(screen.getByText("History")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("button", { name: /history/i })).toBeInTheDocument());
+    await userEvent.click(screen.getByRole("button", { name: /history/i }));
     await userEvent.click(getHistoryOpenButton("existing.zip"));
     await waitFor(() => expect(screen.getByText("Series UID")).toBeInTheDocument());
     expect(screen.getByText("existing-series")).toBeInTheDocument();
 
+    await userEvent.click(screen.getByRole("button", { name: /upload/i }));
     const input = document.querySelector("input[type='file']");
     await userEvent.upload(input, new File(["bad"], "bad.zip", { type: "application/zip" }));
 
@@ -180,10 +214,12 @@ describe("App", () => {
 
     render(<App />);
 
-    await waitFor(() => expect(screen.getByText("History")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("button", { name: /history/i })).toBeInTheDocument());
+    await userEvent.click(screen.getByRole("button", { name: /history/i }));
     await userEvent.click(getHistoryOpenButton("existing.zip"));
     await waitFor(() => expect(screen.getByText("Series UID")).toBeInTheDocument());
 
+    await userEvent.click(screen.getByRole("button", { name: /history/i }));
     await userEvent.click(screen.getByRole("button", { name: /delete existing\.zip/i }));
 
     await waitFor(() => expect(screen.queryByText("existing.zip")).not.toBeInTheDocument());

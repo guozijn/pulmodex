@@ -24,6 +24,10 @@ const MOCK_REPORT = {
   ],
 };
 
+function labeledButton(page, label, name) {
+  return page.getByText(label).locator("../..").getByRole("button", { name, exact: true }).first();
+}
+
 /** Register API route mocks before each test. */
 async function mockApi(page, statusState = "SUCCESS", errorMessage = null) {
   await page.route("**/api/predict", (route) =>
@@ -128,7 +132,7 @@ test.describe("Upload flow", () => {
     });
 
     await expect(page.getByText("Complete")).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText("Findings")).toBeVisible();
+    await expect(page.locator("div").filter({ hasText: /^Findings$/ }).last()).toBeVisible();
     await expect(page.getByText("Nodule 1")).toBeVisible();
     await expect(page.getByText("Nodule 2")).toBeVisible();
   });
@@ -187,13 +191,13 @@ test.describe("Viewer interaction", () => {
 
     await expect(page.getByText("Complete")).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText("Heatmap overlay")).toBeVisible();
-    const toggle = page.getByRole("button", { name: "OFF", exact: true });
+    const toggle = labeledButton(page, "Heatmap overlay", "OFF");
     await expect(toggle).toBeVisible();
     const slider = page.locator("input[type='range']");
     await expect(slider).toBeVisible();
     await expect(slider).toBeDisabled();
     await toggle.click();
-    await expect(page.getByRole("button", { name: "ON", exact: true })).toBeVisible();
+    await expect(labeledButton(page, "Heatmap overlay", "ON")).toBeVisible();
     await expect(slider).toBeEnabled();
     await slider.fill("0.8");
     await expect(page.getByText("OVERLAY 80%")).toBeVisible();

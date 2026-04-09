@@ -80,9 +80,9 @@ def _draw_candidates(
         prob = float(cand["prob"])
         diam_mm = float(cand["diameter_mm"])
 
-        # Half box size in pixels — enforce a visible minimum of 12 px per side half-length.
-        half_h_px = max(12, int(round((diam_mm / 2.0) / spacing_yx[0])))
-        half_w_px = max(12, int(round((diam_mm / 2.0) / spacing_yx[1])))
+        # Half box size in pixels — keep a modest visible minimum for tiny nodules.
+        half_h_px = max(8, int(round((diam_mm / 2.0) / spacing_yx[0])))
+        half_w_px = max(8, int(round((diam_mm / 2.0) / spacing_yx[1])))
         top_left = (cx - half_w_px, cy - half_h_px)
         bottom_right = (cx + half_w_px, cy + half_h_px)
 
@@ -123,7 +123,7 @@ def render_slices(
       - saliency_map.nii.gz
       - candidates.csv
 
-    Writes base, overlay, and composite PNG slices under scan_output_dir/slices/.
+    Writes raw, base, overlay, and composite PNG slices under scan_output_dir/slices/.
 
     Args:
         scan_output_dir: output directory for a single scan
@@ -184,7 +184,8 @@ def render_slices(
             sal_slice = sal_map[tuple(sl)]
 
             grey = _apply_lung_window(conf_slice, window_level, window_width)
-            base_bgr = cv2.cvtColor(grey, cv2.COLOR_GRAY2BGR)
+            raw_bgr = cv2.cvtColor(grey, cv2.COLOR_GRAY2BGR)
+            base_bgr = raw_bgr.copy()
             overlay_bgra = _saliency_rgba(sal_slice, alpha=saliency_alpha)
 
             # Draw nodule boxes directly onto the base image so they are
@@ -205,13 +206,15 @@ def render_slices(
 
             composite_bgr = _composite_base_and_overlay(base_bgr, overlay_bgra)
 
+            raw_path = str(slice_dir / f"raw_{view_name}_{idx:04d}.png")
             base_path = str(slice_dir / f"base_{view_name}_{idx:04d}.png")
             overlay_path = str(slice_dir / f"overlay_{view_name}_{idx:04d}.png")
             composite_path = str(slice_dir / f"{view_name}_{idx:04d}.png")
+            cv2.imwrite(raw_path, raw_bgr)
             cv2.imwrite(base_path, base_bgr)
             cv2.imwrite(overlay_path, overlay_bgra)
             cv2.imwrite(composite_path, composite_bgr)
-            written.extend([base_path, overlay_path, composite_path])
+            written.extend([raw_path, base_path, overlay_path, composite_path])
 
     return written
 

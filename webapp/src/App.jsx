@@ -41,6 +41,56 @@ function SectionLabel({ children }) {
   );
 }
 
+function SidebarMenu({ active, items, onChange }) {
+  return (
+    <div style={{
+      display: "grid",
+      gridTemplateColumns: "1fr 1fr",
+      gap: 6,
+      padding: "0 16px 12px",
+    }}>
+      {items.map((item) => (
+        <button
+          key={item.id}
+          type="button"
+          onClick={() => onChange(item.id)}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 8,
+            padding: "8px 9px",
+            background: active === item.id ? "var(--bg-3)" : "var(--bg-2)",
+            color: active === item.id ? "var(--text)" : "var(--text-2)",
+            border: `1px solid ${active === item.id ? "var(--teal)" : "var(--border)"}`,
+            borderRadius: "var(--radius)",
+            cursor: "pointer",
+            textAlign: "left",
+          }}
+        >
+          <span style={{
+            fontSize: 10,
+            fontWeight: 600,
+            letterSpacing: "0.08em",
+            textTransform: "uppercase",
+          }}>
+            {item.label}
+          </span>
+          {item.badge ? (
+            <span style={{
+              fontSize: 9,
+              fontFamily: "var(--mono)",
+              color: active === item.id ? "var(--teal)" : "var(--text-3)",
+            }}>
+              {item.badge}
+            </span>
+          ) : null}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function ViewTabs({ active, onChange }) {
   const subtitles = { axial: "Transverse", coronal: "Frontal", sagittal: "Lateral" };
   return (
@@ -92,7 +142,8 @@ function ViewTabs({ active, onChange }) {
   );
 }
 
-function OverlayControls({ showOverlay, onToggleOverlay, overlayOpacity, onOpacityChange }) {
+function OverlayControls({ showOverlay, annotationsEnabled, onToggleOverlay, overlayOpacity, onOpacityChange }) {
+  const overlayEnabled = annotationsEnabled && showOverlay;
   return (
     <div style={{ marginBottom: 16 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 7 }}>
@@ -100,18 +151,20 @@ function OverlayControls({ showOverlay, onToggleOverlay, overlayOpacity, onOpaci
         <button
           type="button"
           onClick={onToggleOverlay}
+          disabled={!annotationsEnabled}
           style={{
             fontSize: 10,
             fontFamily: "var(--mono)",
-            color: showOverlay ? "var(--teal)" : "var(--text-3)",
+            color: overlayEnabled ? "var(--teal)" : "var(--text-3)",
             background: "transparent",
             border: "1px solid var(--border)",
             borderRadius: 4,
             padding: "2px 6px",
-            cursor: "pointer",
+            cursor: annotationsEnabled ? "pointer" : "not-allowed",
+            opacity: annotationsEnabled ? 1 : 0.5,
           }}
         >
-          {showOverlay ? "ON" : "OFF"}
+          {overlayEnabled ? "ON" : "OFF"}
         </button>
       </div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 7 }}>
@@ -127,13 +180,39 @@ function OverlayControls({ showOverlay, onToggleOverlay, overlayOpacity, onOpaci
         step={0.05}
         value={overlayOpacity}
         onChange={(e) => onOpacityChange(Number(e.target.value))}
-        disabled={!showOverlay}
+        disabled={!overlayEnabled}
         style={{
           width: "100%",
-          opacity: showOverlay ? 1 : 0.4,
-          cursor: showOverlay ? "pointer" : "not-allowed",
+          opacity: overlayEnabled ? 1 : 0.4,
+          cursor: overlayEnabled ? "pointer" : "not-allowed",
         }}
       />
+    </div>
+  );
+}
+
+function AnnotationControls({ showAnnotations, onToggleAnnotations }) {
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <label style={{ fontSize: 11, color: "var(--text-2)" }}>Annotations</label>
+        <button
+          type="button"
+          onClick={onToggleAnnotations}
+          style={{
+            fontSize: 10,
+            fontFamily: "var(--mono)",
+            color: showAnnotations ? "var(--teal)" : "var(--text-3)",
+            background: "transparent",
+            border: "1px solid var(--border)",
+            borderRadius: 4,
+            padding: "2px 6px",
+            cursor: "pointer",
+          }}
+        >
+          {showAnnotations ? "ON" : "OFF"}
+        </button>
+      </div>
     </div>
   );
 }
@@ -150,6 +229,7 @@ export default function App() {
   const [report, setReport] = useState(null);
   const [activeView, setActiveView] = useState("axial");
   const [sliceIdx, setSliceIdx] = useState(0);
+  const [showAnnotations, setShowAnnotations] = useState(true);
   const [showOverlay, setShowOverlay] = useState(false);
   const [overlayOpacity, setOverlayOpacity] = useState(0.30);
   const [selectedNodule, setSelectedNodule] = useState(null);
@@ -157,6 +237,7 @@ export default function App() {
   const [history, setHistory] = useState([]);
   const [deletingScanId, setDeletingScanId] = useState(null);
   const [historyError, setHistoryError] = useState(null);
+  const [activeSidebarPanel, setActiveSidebarPanel] = useState("upload");
   const pollRef = useRef(null);
 
   const stopPolling = useCallback(() => {
@@ -172,8 +253,10 @@ export default function App() {
     setSelectedNodule(null);
     setSliceCatalog({});
     setSliceIdx(0);
+    setShowAnnotations(true);
     setShowOverlay(false);
     setOverlayOpacity(0.30);
+    setActiveSidebarPanel("upload");
   }, []);
 
   useEffect(() => stopPolling, [stopPolling]);
@@ -249,6 +332,7 @@ export default function App() {
       setStatus("PENDING");
       setProgressStep(null);
       setErrorMessage(null);
+      setActiveSidebarPanel("upload");
       const now = Date.now();
       setStartedAt(now);
       setFinishedAt(null);
@@ -278,6 +362,7 @@ export default function App() {
             const catalog = await loadSliceCatalog(data.seriesuid);
             const initialIndices = catalog.axial?.indices ?? [];
             setSliceIdx(initialIndices[0] ?? 0);
+            setActiveSidebarPanel("findings");
             handleUploadSuccess();
           } else if (s.state === "FAILURE") {
             stopPolling();
@@ -317,8 +402,10 @@ export default function App() {
     setReport(scan.report ?? null);
     setSelectedNodule(null);
     setSliceIdx(0);
+    setShowAnnotations(true);
     setShowOverlay(false);
     setOverlayOpacity(0.30);
+    setActiveSidebarPanel(scan.report?.top_candidates?.length ? "findings" : "scan");
     const catalog = await loadSliceCatalog(scan.seriesuid);
     const initialIndices = catalog.axial?.indices ?? [];
     setSliceIdx(initialIndices[0] ?? 0);
@@ -378,14 +465,22 @@ export default function App() {
     }
   }, [activeView, activeSliceMeta.indices]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const baseLayer = showAnnotations ? "base" : "raw";
   const baseSliceUrl = seriesuid && status === "SUCCESS"
-    ? `${API}/slices/${seriesuid}/${activeView}?idx=${sliceIdx}&layer=base`
+    ? `${API}/slices/${seriesuid}/${activeView}?idx=${sliceIdx}&layer=${baseLayer}`
     : null;
   const overlaySliceUrl = seriesuid && status === "SUCCESS"
     ? `${API}/slices/${seriesuid}/${activeView}?idx=${sliceIdx}&layer=overlay`
     : null;
 
   const candidates = report?.top_candidates ?? [];
+  const historyDone = history.filter((s) => s.status === "done");
+  const sidebarItems = [
+    { id: "upload", label: "Upload" },
+    { id: "scan", label: "Scan", badge: seriesuid ? "1" : "" },
+    { id: "findings", label: "Findings", badge: candidates.length ? String(candidates.length) : "" },
+    { id: "history", label: "History", badge: historyDone.length ? String(historyDone.length) : "" },
+  ];
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", background: "var(--bg)" }}>
@@ -430,17 +525,8 @@ export default function App() {
           borderRight: "1px solid var(--border)",
           display: "flex",
           flexDirection: "column",
-          overflowY: "auto",
           flexShrink: 0,
         }}>
-          <div style={{ padding: "16px 16px 12px" }}>
-            <SectionLabel>Upload</SectionLabel>
-            <UploadZone
-              onUpload={handleUpload}
-              disabled={status === "PENDING" || status === "PROGRESS"}
-            />
-          </div>
-
           {status && (
             <div style={{ padding: "0 16px 4px" }}>
               <StatusBanner
@@ -451,147 +537,185 @@ export default function App() {
               />
             </div>
           )}
+          <div style={{ paddingTop: 16 }}>
+            <SidebarMenu active={activeSidebarPanel} items={sidebarItems} onChange={setActiveSidebarPanel} />
+          </div>
 
-          {seriesuid && (
-            <div style={{ padding: "0 16px 16px" }}>
-              <SectionLabel>Scan</SectionLabel>
-              <div style={{
-                background: "var(--bg-2)",
-                border: "1px solid var(--border)",
-                borderRadius: "var(--radius)",
-                padding: "10px 12px",
-              }}>
-                <div style={{
-                  fontSize: 9,
-                  color: "var(--text-3)",
-                  textTransform: "uppercase",
-                  letterSpacing: "0.08em",
-                  marginBottom: 5,
-                  fontWeight: 600,
-                }}>
-                  Series UID
-                </div>
-                <div style={{
-                  fontFamily: "var(--mono)",
-                  fontSize: 9,
-                  color: "var(--text-2)",
-                  wordBreak: "break-all",
-                  lineHeight: 1.7,
-                }}>
-                  {seriesuid}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {status === "SUCCESS" && (
-            <>
-              <div style={{ padding: "0 16px" }}>
-                <OverlayControls
-                  showOverlay={showOverlay}
-                  onToggleOverlay={() => setShowOverlay((prev) => !prev)}
-                  overlayOpacity={overlayOpacity}
-                  onOpacityChange={setOverlayOpacity}
+          <div style={{ flex: 1, overflowY: "auto", padding: "0 16px 20px" }}>
+            {activeSidebarPanel === "upload" && (
+              <div>
+                <SectionLabel>Upload</SectionLabel>
+                <UploadZone
+                  onUpload={handleUpload}
+                  disabled={status === "PENDING" || status === "PROGRESS"}
                 />
               </div>
-              <div style={{ padding: "0 16px 20px" }}>
-                <SectionLabel>Findings</SectionLabel>
-                <NoduleList
-                  candidates={candidates}
-                  selected={selectedNodule}
-                  onSelect={(c) => {
-                    setSelectedNodule(c);
-                    setSliceIdx(resolveCandidateSlice(c, activeView));
-                  }}
-                />
-                {candidates.length === 0 && (
-                  <div style={{ fontSize: 11, color: "var(--text-3)", padding: "6px 0" }}>
-                    No nodules detected.
+            )}
+
+            {activeSidebarPanel === "scan" && (
+              <div>
+                <SectionLabel>Scan</SectionLabel>
+                {seriesuid ? (
+                  <div style={{
+                    background: "var(--bg-2)",
+                    border: "1px solid var(--border)",
+                    borderRadius: "var(--radius)",
+                    padding: "10px 12px",
+                  }}>
+                    <div style={{
+                      fontSize: 9,
+                      color: "var(--text-3)",
+                      textTransform: "uppercase",
+                      letterSpacing: "0.08em",
+                      marginBottom: 5,
+                      fontWeight: 600,
+                    }}>
+                      Series UID
+                    </div>
+                    <div style={{
+                      fontFamily: "var(--mono)",
+                      fontSize: 9,
+                      color: "var(--text-2)",
+                      wordBreak: "break-all",
+                      lineHeight: 1.7,
+                    }}>
+                      {seriesuid}
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 11, color: "var(--text-3)" }}>
+                    No scan selected.
                   </div>
                 )}
               </div>
-            </>
-          )}
+            )}
 
-          {history.filter(s => s.status === "done").length > 0 && (
-            <div style={{ padding: "0 16px 20px", borderTop: "1px solid var(--border)", paddingTop: 16 }}>
-              <SectionLabel>History</SectionLabel>
-              {historyError && (
-                <div style={{ fontSize: 11, color: "#ff8a80", marginBottom: 8 }}>
-                  {historyError}
-                </div>
-              )}
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                {history.filter(s => s.status === "done").map((scan) => {
-                  const isActive = scan.seriesuid === seriesuid;
-                  const date = new Date(scan.uploaded_at).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-                  const time = new Date(scan.uploaded_at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-                  const n = scan.report?.n_candidates_final ?? 0;
-                  return (
-                    <div
-                      key={scan.seriesuid}
-                      style={{
-                        display: "flex",
-                        alignItems: "stretch",
-                        gap: 6,
-                        background: isActive ? "var(--bg-3)" : "var(--bg-2)",
-                        border: `1px solid ${isActive ? "var(--teal)" : "var(--border)"}`,
-                        borderRadius: "var(--radius)",
-                        width: "100%",
+            {activeSidebarPanel === "findings" && (
+              <div>
+                <SectionLabel>Findings</SectionLabel>
+                {status === "SUCCESS" ? (
+                  <>
+                    <OverlayControls
+                      showOverlay={showOverlay}
+                      annotationsEnabled={showAnnotations}
+                      onToggleOverlay={() => setShowOverlay((prev) => !prev)}
+                      overlayOpacity={overlayOpacity}
+                      onOpacityChange={setOverlayOpacity}
+                    />
+                    <AnnotationControls
+                      showAnnotations={showAnnotations}
+                      onToggleAnnotations={() => setShowAnnotations((prev) => !prev)}
+                    />
+                    <NoduleList
+                      candidates={candidates}
+                      selected={selectedNodule}
+                      onSelect={(c) => {
+                        setSelectedNodule(c);
+                        setSliceIdx(resolveCandidateSlice(c, activeView));
                       }}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => openScan(scan)}
-                        style={{
-                          display: "flex",
-                          flexDirection: "column",
-                          alignItems: "flex-start",
-                          gap: 2,
-                          padding: "7px 10px 5px",
-                          background: "transparent",
-                          border: 0,
-                          cursor: "pointer",
-                          textAlign: "left",
-                          width: "100%",
-                        }}
-                      >
-                        <div style={{ fontSize: 10, color: "var(--text)", fontFamily: "var(--mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", width: "100%" }}>
-                          {scan.filename !== "unknown.zip" ? scan.filename : scan.seriesuid.slice(0, 8) + "…"}
-                        </div>
-                        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                          <span style={{ fontSize: 9, color: "var(--text-3)", fontFamily: "var(--mono)" }}>{date} {time}</span>
-                          <span style={{ fontSize: 9, color: n > 0 ? "var(--teal)" : "var(--text-3)", fontFamily: "var(--mono)" }}>
-                            {n > 0 ? `${n} nodule${n > 1 ? "s" : ""}` : "none"}
-                          </span>
-                        </div>
-                      </button>
-                      <div style={{ display: "flex", justifyContent: "flex-end", padding: "0 10px 8px" }}>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteScan(scan)}
-                          disabled={deletingScanId === scan.seriesuid}
-                          aria-label={`Delete ${scan.filename !== "unknown.zip" ? scan.filename : scan.seriesuid}`}
-                          style={{
-                            fontSize: 9,
-                            fontFamily: "var(--mono)",
-                            color: deletingScanId === scan.seriesuid ? "var(--text-3)" : "#ff8a80",
-                            background: "transparent",
-                            border: "1px solid var(--border)",
-                            borderRadius: 4,
-                            padding: "2px 6px",
-                            cursor: deletingScanId === scan.seriesuid ? "wait" : "pointer",
-                          }}
-                        >
-                          {deletingScanId === scan.seriesuid ? "DELETING" : "DELETE"}
-                        </button>
+                    />
+                    {candidates.length === 0 && (
+                      <div style={{ fontSize: 11, color: "var(--text-3)", padding: "6px 0" }}>
+                        No nodules detected.
                       </div>
-                    </div>
-                  );
-                })}
+                    )}
+                  </>
+                ) : (
+                  <div style={{ fontSize: 11, color: "var(--text-3)" }}>
+                    Findings will appear after a completed scan.
+                  </div>
+                )}
               </div>
-            </div>
-          )}
+            )}
+
+            {activeSidebarPanel === "history" && (
+              <div>
+                <SectionLabel>History</SectionLabel>
+                {historyDone.length > 0 ? (
+                  <>
+                    {historyError && (
+                      <div style={{ fontSize: 11, color: "#ff8a80", marginBottom: 8 }}>
+                        {historyError}
+                      </div>
+                    )}
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      {historyDone.map((scan) => {
+                        const isActive = scan.seriesuid === seriesuid;
+                        const date = new Date(scan.uploaded_at).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+                        const time = new Date(scan.uploaded_at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+                        const n = scan.report?.n_candidates_final ?? 0;
+                        return (
+                          <div
+                            key={scan.seriesuid}
+                            style={{
+                              display: "flex",
+                              alignItems: "stretch",
+                              gap: 6,
+                              background: isActive ? "var(--bg-3)" : "var(--bg-2)",
+                              border: `1px solid ${isActive ? "var(--teal)" : "var(--border)"}`,
+                              borderRadius: "var(--radius)",
+                              width: "100%",
+                            }}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => openScan(scan)}
+                              style={{
+                                display: "flex",
+                                flexDirection: "column",
+                                alignItems: "flex-start",
+                                gap: 2,
+                                padding: "7px 10px 5px",
+                                background: "transparent",
+                                border: 0,
+                                cursor: "pointer",
+                                textAlign: "left",
+                                width: "100%",
+                              }}
+                            >
+                              <div style={{ fontSize: 10, color: "var(--text)", fontFamily: "var(--mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", width: "100%" }}>
+                                {scan.filename !== "unknown.zip" ? scan.filename : scan.seriesuid.slice(0, 8) + "…"}
+                              </div>
+                              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                                <span style={{ fontSize: 9, color: "var(--text-3)", fontFamily: "var(--mono)" }}>{date} {time}</span>
+                                <span style={{ fontSize: 9, color: n > 0 ? "var(--teal)" : "var(--text-3)", fontFamily: "var(--mono)" }}>
+                                  {n > 0 ? `${n} nodule${n > 1 ? "s" : ""}` : "none"}
+                                </span>
+                              </div>
+                            </button>
+                            <div style={{ display: "flex", justifyContent: "flex-end", padding: "0 10px 8px" }}>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteScan(scan)}
+                                disabled={deletingScanId === scan.seriesuid}
+                                aria-label={`Delete ${scan.filename !== "unknown.zip" ? scan.filename : scan.seriesuid}`}
+                                style={{
+                                  fontSize: 9,
+                                  fontFamily: "var(--mono)",
+                                  color: deletingScanId === scan.seriesuid ? "var(--text-3)" : "#ff8a80",
+                                  background: "transparent",
+                                  border: "1px solid var(--border)",
+                                  borderRadius: 4,
+                                  padding: "2px 6px",
+                                  cursor: deletingScanId === scan.seriesuid ? "wait" : "pointer",
+                                }}
+                              >
+                                {deletingScanId === scan.seriesuid ? "DELETING" : "DELETE"}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ fontSize: 11, color: "var(--text-3)" }}>
+                    No saved scans yet.
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </aside>
 
         {/* Main viewer */}
@@ -607,7 +731,7 @@ export default function App() {
             }}
             view={activeView}
             maxSliceIdx={maxSliceIdx}
-            showOverlay={showOverlay}
+            showOverlay={showAnnotations && showOverlay}
             overlayOpacity={overlayOpacity}
           />
         </main>
