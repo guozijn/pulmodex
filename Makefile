@@ -8,7 +8,7 @@ PYTHON ?= python3
 NPM ?= npm
 REDIS_URL_LOCAL ?= redis://localhost:6379/0
 API_HOST ?= 0.0.0.0
-API_PORT ?= 8000
+API_PORT ?= 8010
 FRONTEND_HOST ?= 0.0.0.0
 FRONTEND_PORT ?= 3000
 

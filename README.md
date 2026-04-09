@@ -298,7 +298,7 @@ make dev
 
 | Service | URL | Description |
 |---------|-----|-------------|
-| API | http://localhost:8000 | FastAPI — upload scans, poll jobs, fetch slices |
+| API | http://localhost:8010 | FastAPI — upload scans, poll jobs, fetch slices |
 | Frontend | http://localhost:3000 | React — drag-drop upload, CT viewer, nodule list |
 
 **API endpoints:**

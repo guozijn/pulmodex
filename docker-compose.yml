@@ -16,7 +16,7 @@ services:
       dockerfile: docker/api.Dockerfile
     user: "${UID}:${GID}"
     ports:
-      - "8000:8000"
+      - "8010:8010"
     volumes:
       - ./checkpoints:/app/checkpoints:ro
       - ./outputs:/app/outputs
