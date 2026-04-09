@@ -315,8 +315,8 @@ GET  /report/{uid}                         fetch JSON inference report for a sca
 Supported slice layers:
 
 - `layer=composite` renders the combined PNG
-- `layer=base` returns the windowed CT slice with nodule circles drawn directly on it
-- `layer=overlay` returns the transparent heatmap (JET colormap, signal pixels fully opaque; opacity controlled client-side)
+- `layer=base` returns the windowed CT slice with nodule square boxes drawn directly on it
+- `layer=overlay` returns the transparent heatmap (warm yellow-orange overlay with per-pixel alpha from saliency intensity; final opacity controlled client-side)
 
 Upload inputs:
 

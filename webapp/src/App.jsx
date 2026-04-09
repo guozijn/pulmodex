@@ -151,7 +151,7 @@ export default function App() {
   const [activeView, setActiveView] = useState("axial");
   const [sliceIdx, setSliceIdx] = useState(0);
   const [showOverlay, setShowOverlay] = useState(true);
-  const [overlayOpacity, setOverlayOpacity] = useState(0.45);
+  const [overlayOpacity, setOverlayOpacity] = useState(0.30);
   const [selectedNodule, setSelectedNodule] = useState(null);
   const [sliceCatalog, setSliceCatalog] = useState({});
   const [history, setHistory] = useState([]);
@@ -171,7 +171,7 @@ export default function App() {
     setSliceCatalog({});
     setSliceIdx(0);
     setShowOverlay(true);
-    setOverlayOpacity(0.45);
+    setOverlayOpacity(0.30);
   }, []);
 
   useEffect(() => stopPolling, [stopPolling]);
@@ -311,7 +311,7 @@ export default function App() {
     setSelectedNodule(null);
     setSliceIdx(0);
     setShowOverlay(true);
-    setOverlayOpacity(0.45);
+    setOverlayOpacity(0.30);
     const catalog = await loadSliceCatalog(scan.seriesuid);
     const initialIndices = catalog.axial?.indices ?? [];
     setSliceIdx(initialIndices[0] ?? 0);

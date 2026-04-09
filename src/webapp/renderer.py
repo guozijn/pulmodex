@@ -40,15 +40,21 @@ def _saliency_rgba(
 ) -> np.ndarray:
     """Return an RGBA saliency overlay for a slice.
 
-    Alpha is NOT baked into the PNG — pixels with signal are fully opaque,
-    pixels with no signal are fully transparent.  The frontend CSS opacity
-    slider controls the final blend level across the full 0–100 % range.
+    Colour is a warm yellow-orange gradient tuned for CT readability.
+    Per-pixel alpha follows saliency intensity so strong responses appear
+    denser while weak responses remain translucent. The frontend CSS opacity
+    slider still controls the final global blend level across the full
+    0–100 % range.
     """
-    sal_8bit = (saliency_slice * 255).astype(np.uint8)
-    jet = cv2.applyColorMap(sal_8bit, cv2.COLORMAP_JET)
-    rgba = cv2.cvtColor(jet, cv2.COLOR_BGR2BGRA)
-    # Fully opaque where signal exists, transparent elsewhere
-    rgba[..., 3] = np.where(saliency_slice > 1e-4, 255, 0).astype(np.uint8)
+    sal = np.clip(saliency_slice.astype(np.float32), 0.0, 1.0)
+    visible = sal >= 0.05
+    sal_gamma = np.power(sal, 0.85)
+
+    rgba = np.zeros((*sal.shape, 4), dtype=np.uint8)
+    # BGRA channels: warm amber -> yellow without rainbow artefacts.
+    rgba[..., 1] = np.where(visible, (140.0 + 90.0 * sal_gamma).astype(np.uint8), 0)
+    rgba[..., 2] = np.where(visible, (220.0 + 35.0 * sal_gamma).astype(np.uint8), 0)
+    rgba[..., 3] = np.where(visible, np.clip(sal_gamma * 255.0, 0, 255).astype(np.uint8), 0)
     return rgba
 
 
@@ -57,10 +63,10 @@ def _draw_candidates(
     candidates_on_slice: list[dict],
     spacing_yx: tuple[float, float],
     fp_threshold: float,
-    confident_color: tuple[int, int, int] = (255, 0, 0),
-    uncertain_color: tuple[int, int, int] = (255, 165, 0),
+    confident_color: tuple[int, int, int] = (255, 255, 0),
+    uncertain_color: tuple[int, int, int] = (255, 200, 0),
 ) -> np.ndarray:
-    """Draw candidate circles and confidence scores.
+    """Draw candidate square boxes and confidence scores.
 
     Args:
         img: (H, W, 4) uint8 BGRA
@@ -74,17 +80,18 @@ def _draw_candidates(
         prob = float(cand["prob"])
         diam_mm = float(cand["diameter_mm"])
 
-        # Radius in pixels — enforce a visible minimum of 12 px
-        radius_px = max(12, int(round((diam_mm / 2.0) / spacing_yx[0])))
+        # Half box size in pixels — enforce a visible minimum of 12 px per side half-length.
+        half_h_px = max(12, int(round((diam_mm / 2.0) / spacing_yx[0])))
+        half_w_px = max(12, int(round((diam_mm / 2.0) / spacing_yx[1])))
+        top_left = (cx - half_w_px, cy - half_h_px)
+        bottom_right = (cx + half_w_px, cy + half_h_px)
 
         color = confident_color if prob >= fp_threshold else uncertain_color
-        # Outer glow (dark halo for contrast against both bright and dark tissue)
-        cv2.circle(img, (cx, cy), radius_px + 1, (0, 0, 0, 255), thickness=3, lineType=cv2.LINE_AA)
-        # Main circle
-        cv2.circle(img, (cx, cy), radius_px, (*color, 255), thickness=2, lineType=cv2.LINE_AA)
+        # Main square box
+        cv2.rectangle(img, top_left, bottom_right, (*color, 255), thickness=1, lineType=cv2.LINE_AA)
         # Score label with dark shadow for readability
         label = f"{prob:.2f}"
-        lx, ly = cx + radius_px + 4, cy + 4
+        lx, ly = cx + half_w_px + 4, cy + 4
         cv2.putText(img, label, (lx + 1, ly + 1), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0, 255), 2, cv2.LINE_AA)
         cv2.putText(img, label, (lx, ly), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (*color, 255), 1, cv2.LINE_AA)
     return img
@@ -106,8 +113,8 @@ def render_slices(
     fp_threshold: float = 0.5,
     window_level: int = -600,
     window_width: int = 1500,
-    confident_color: tuple[int, int, int] = (255, 0, 0),
-    uncertain_color: tuple[int, int, int] = (255, 165, 0),
+    confident_color: tuple[int, int, int] = (255, 255, 0),
+    uncertain_color: tuple[int, int, int] = (255, 200, 0),
 ) -> list[str]:
     """Render annotated PNG slices for all three views.
 
@@ -180,7 +187,7 @@ def render_slices(
             base_bgr = cv2.cvtColor(grey, cv2.COLOR_GRAY2BGR)
             overlay_bgra = _saliency_rgba(sal_slice, alpha=saliency_alpha)
 
-            # Draw nodule circles directly onto the base image so they are
+            # Draw nodule boxes directly onto the base image so they are
             # always visible at full opacity regardless of the overlay toggle.
             if not cand_df.empty:
                 on_slice = _candidates_on_slice(cand_df, axis, idx, spacing_mm)

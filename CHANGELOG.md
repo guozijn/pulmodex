@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased] — 2026-04-09
 
+### Changed
+- `src/webapp/renderer.py`: frontend slice annotations now render candidate boxes as square bounding boxes instead of circles; box width/height are computed per axis spacing so non-isotropic pixels still produce the intended square ROI in physical space
+- `src/webapp/renderer.py`, `webapp/src/App.jsx`, `webapp/src/components/Viewer.jsx`: heatmap overlay now uses a warm yellow-orange palette with per-pixel alpha driven by saliency intensity instead of opaque JET regions; default frontend overlay opacity reduced from 45% to 30%
+- `src/webapp/renderer.py`: bounding-box styling simplified to a single 1 px yellow line, removing the dark halo so annotations read more cleanly on the current CT viewer treatment
+
 ### Removed
 - `detect` CLI command group (`standardize`, `prepare`, `infer`, `evaluate`) removed entirely; the MONAI detection workflow is no longer exposed via the CLI.
 - `src/detection/` module and all `src/detect_*.py` entry-point scripts deleted.

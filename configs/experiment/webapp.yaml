@@ -11,6 +11,6 @@ webapp:
   # Lung window for slice rendering
   window_level: -600
   window_width: 1500
-  # Candidate circle colours
-  confident_color: [255, 0, 0]    # red  ≥ fp_threshold
-  uncertain_color: [255, 165, 0]  # orange < fp_threshold
+  # Candidate box colours
+  confident_color: [255, 255, 0]  # yellow   >= fp_threshold
+  uncertain_color: [255, 200, 0]  # amber    < fp_threshold
