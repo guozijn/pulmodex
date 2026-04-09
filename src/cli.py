@@ -38,30 +38,7 @@ def _build_commands() -> dict[str, tuple[Path, str]]:
 
 
 def _build_command_groups() -> dict[str, dict[str, tuple[Path, str]]]:
-    return {
-        "detect": {
-            "prepare": (
-                ROOT / "src" / "detect_prepare.py",
-                "Prepare local LUNA16 splits for MONAI 3D detection.",
-            ),
-            "standardize": (
-                ROOT / "src" / "detect_standardize.py",
-                "Standardize raw MHD or DICOM inputs into NIfTI volumes.",
-            ),
-            "train": (
-                ROOT / "src" / "detect_train.py",
-                "Train a MONAI 3D RetinaNet detector.",
-            ),
-            "infer": (
-                ROOT / "src" / "detect_infer.py",
-                "Run MONAI 3D detection inference.",
-            ),
-            "evaluate": (
-                ROOT / "src" / "detect_evaluate.py",
-                "Run LUNA16 evaluation for a MONAI 3D detector.",
-            ),
-        }
-    }
+    return {}
 
 
 def _print_help(
