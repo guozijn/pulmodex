@@ -187,9 +187,14 @@ test.describe("Viewer interaction", () => {
 
     await expect(page.getByText("Complete")).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText("Heatmap overlay")).toBeVisible();
-    await expect(page.getByRole("button", { name: "ON", exact: true })).toBeVisible();
+    const toggle = page.getByRole("button", { name: "OFF", exact: true });
+    await expect(toggle).toBeVisible();
     const slider = page.locator("input[type='range']");
     await expect(slider).toBeVisible();
+    await expect(slider).toBeDisabled();
+    await toggle.click();
+    await expect(page.getByRole("button", { name: "ON", exact: true })).toBeVisible();
+    await expect(slider).toBeEnabled();
     await slider.fill("0.8");
     await expect(page.getByText("OVERLAY 80%")).toBeVisible();
   });

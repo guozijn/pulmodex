@@ -34,7 +34,7 @@ export default function Viewer({
   onSliceChange,
   view = "axial",
   maxSliceIdx = null,
-  showOverlay = true,
+  showOverlay = false,
   overlayOpacity = 0.30,
 }) {
   const [baseImgSrc, setBaseImgSrc] = useState(null);

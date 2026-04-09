@@ -150,7 +150,7 @@ export default function App() {
   const [report, setReport] = useState(null);
   const [activeView, setActiveView] = useState("axial");
   const [sliceIdx, setSliceIdx] = useState(0);
-  const [showOverlay, setShowOverlay] = useState(true);
+  const [showOverlay, setShowOverlay] = useState(false);
   const [overlayOpacity, setOverlayOpacity] = useState(0.30);
   const [selectedNodule, setSelectedNodule] = useState(null);
   const [sliceCatalog, setSliceCatalog] = useState({});
@@ -170,7 +170,7 @@ export default function App() {
     setSelectedNodule(null);
     setSliceCatalog({});
     setSliceIdx(0);
-    setShowOverlay(true);
+    setShowOverlay(false);
     setOverlayOpacity(0.30);
   }, []);
 
@@ -310,7 +310,7 @@ export default function App() {
     setReport(scan.report ?? null);
     setSelectedNodule(null);
     setSliceIdx(0);
-    setShowOverlay(true);
+    setShowOverlay(false);
     setOverlayOpacity(0.30);
     const catalog = await loadSliceCatalog(scan.seriesuid);
     const initialIndices = catalog.axial?.indices ?? [];

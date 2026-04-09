@@ -76,7 +76,10 @@ describe("App", () => {
         { timeout: 4000 },
       );
       expect(screen.getByText("Heatmap overlay")).toBeInTheDocument();
-      expect(screen.getByText("ON")).toBeInTheDocument();
+      const toggle = screen.getByRole("button", { name: "OFF" });
+      expect(toggle).toBeInTheDocument();
+      await userEvent.click(toggle);
+      expect(screen.getByRole("button", { name: "ON" })).toBeInTheDocument();
     },
     6000,
   );

@@ -16,6 +16,7 @@ describe("Viewer", () => {
         overlaySliceUrl="/api/slices/uid/axial?idx=5&layer=overlay"
         sliceIdx={5}
         onSliceChange={vi.fn()}
+        showOverlay
       />
     );
     const imgs = container.querySelectorAll("img");
@@ -81,6 +82,19 @@ describe("Viewer", () => {
         sliceIdx={5}
         onSliceChange={vi.fn()}
         showOverlay={false}
+      />
+    );
+    const imgs = container.querySelectorAll("img");
+    expect(imgs).toHaveLength(1);
+  });
+
+  it("hides overlay image by default", () => {
+    const { container } = render(
+      <Viewer
+        baseSliceUrl="/api/slices/uid/axial?idx=5&layer=base"
+        overlaySliceUrl="/api/slices/uid/axial?idx=5&layer=overlay"
+        sliceIdx={5}
+        onSliceChange={vi.fn()}
       />
     );
     const imgs = container.querySelectorAll("img");
