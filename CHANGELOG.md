@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased] — 2026-04-09
+
+### Removed
+- `detect` CLI command group (`standardize`, `prepare`, `infer`, `evaluate`) removed entirely; the MONAI detection workflow is no longer exposed via the CLI.
+
 ## [Unreleased] — 2026-03-27
 
 ### Added
