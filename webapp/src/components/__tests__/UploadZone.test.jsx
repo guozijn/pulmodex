@@ -15,6 +15,11 @@ describe("UploadZone", () => {
     expect(screen.getByText("Processing…")).toBeInTheDocument();
   });
 
+  it("shows uploading message when uploading", () => {
+    render(<UploadZone onUpload={vi.fn()} disabled={true} uploading />);
+    expect(screen.getByText("Uploading scan…")).toBeInTheDocument();
+  });
+
   it("calls onUpload with file when a file is selected via input", async () => {
     const onUpload = vi.fn();
     render(<UploadZone onUpload={onUpload} disabled={false} />);

@@ -14,7 +14,7 @@ function CTScanIcon({ size = 32, color = "currentColor" }) {
   );
 }
 
-export default function UploadZone({ onUpload, disabled }) {
+export default function UploadZone({ onUpload, disabled, uploading = false }) {
   const inputRef = useRef(null);
 
   const handleDrop = (e) => {
@@ -48,12 +48,14 @@ export default function UploadZone({ onUpload, disabled }) {
       }}
     >
       <div style={{ marginBottom: 10, color: "var(--teal)", opacity: 0.65, display: "flex", justifyContent: "center" }}>
-        <CTScanIcon size={28} />
+        <div style={{ animation: uploading ? "spin 1s linear infinite" : "none" }}>
+          <CTScanIcon size={28} />
+        </div>
       </div>
       <p style={{ fontSize: 12, color: "var(--text-2)", lineHeight: 1.5 }}>
-        {disabled ? "Processing…" : "Drop a .zip DICOM series here or click to upload"}
+        {uploading ? "Uploading scan…" : disabled ? "Processing…" : "Drop a .zip DICOM series here or click to upload"}
       </p>
-      {!disabled && (
+      {!disabled && !uploading && (
         <div style={{ marginTop: 9, display: "flex", justifyContent: "center", gap: 4 }}>
           {[".ZIP", "DICOM", "SERIES"].map((fmt) => (
             <span

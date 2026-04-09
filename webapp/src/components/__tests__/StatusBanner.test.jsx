@@ -14,6 +14,11 @@ describe("StatusBanner", () => {
     expect(screen.getByText("Queued…")).toBeInTheDocument();
   });
 
+  it("shows uploading label for UPLOADING", () => {
+    render(<StatusBanner status="UPLOADING" />);
+    expect(screen.getByText("Uploading scan…")).toBeInTheDocument();
+  });
+
   it("shows running label for PROGRESS", () => {
     render(<StatusBanner status="PROGRESS" />);
     expect(screen.getByText("Running inference…")).toBeInTheDocument();

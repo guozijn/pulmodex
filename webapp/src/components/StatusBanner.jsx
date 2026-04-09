@@ -1,6 +1,7 @@
 import React from "react";
 
 const CONFIG = {
+  UPLOADING:{ color: "var(--blue)",  bg: "var(--blue-bg)",  border: "rgba(0,112,243,0.18)",   label: "Uploading scan…",   animate: true  },
   PENDING:  { color: "var(--amber)", bg: "var(--amber-bg)", border: "rgba(245,158,11,0.18)",  label: "Queued…",           animate: false },
   PROGRESS: { color: "var(--blue)",  bg: "var(--blue-bg)",  border: "rgba(0,112,243,0.18)",   label: "Running inference…", animate: true  },
   SUCCESS:  { color: "var(--green)", bg: "var(--green-bg)", border: "rgba(34,197,94,0.18)",   label: "Complete",           animate: false },

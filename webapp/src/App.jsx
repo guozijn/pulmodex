@@ -319,6 +319,10 @@ export default function App() {
   const handleUpload = useCallback(async (file) => {
     stopPolling();
     try {
+      setStatus("UPLOADING");
+      setProgressStep(null);
+      setErrorMessage(null);
+      setFinishedAt(null);
       const form = new FormData();
       form.append("file", file);
       const res = await fetch(`${API}/predict`, { method: "POST", body: form });
@@ -547,7 +551,8 @@ export default function App() {
                 <SectionLabel>Upload</SectionLabel>
                 <UploadZone
                   onUpload={handleUpload}
-                  disabled={status === "PENDING" || status === "PROGRESS"}
+                  disabled={status === "UPLOADING" || status === "PENDING" || status === "PROGRESS"}
+                  uploading={status === "UPLOADING"}
                 />
               </div>
             )}

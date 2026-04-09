@@ -54,6 +54,29 @@ describe("App", () => {
     expect(screen.getByText("ELAPSED 00:00")).toBeInTheDocument();
   });
 
+  it("shows uploading feedback immediately before the queue response arrives", async () => {
+    let resolvePredict;
+    vi.spyOn(window, "setInterval").mockReturnValue(99);
+    vi.spyOn(window, "clearInterval").mockImplementation(() => {});
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url) => {
+      if (url.includes("/predict")) {
+        return new Promise((resolve) => {
+          resolvePredict = () => resolve({ ok: true, json: async () => ({ job_id: "job-upload", seriesuid: "series-upload" }) });
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => [] });
+    }));
+
+    render(<App />);
+    const input = document.querySelector("input[type='file']");
+    const uploadPromise = userEvent.upload(input, new File(["data"], "scan.zip", { type: "application/zip" }));
+
+    await waitFor(() => expect(screen.getAllByText("Uploading scan…").length).toBeGreaterThan(0));
+    resolvePredict();
+    await uploadPromise;
+    await waitFor(() => expect(screen.getByText("Queued…")).toBeInTheDocument());
+  });
+
   it(
     "transitions to SUCCESS and shows overlay controls when polling resolves",
     async () => {
