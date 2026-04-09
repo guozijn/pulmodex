@@ -155,6 +155,8 @@ export default function App() {
   const [selectedNodule, setSelectedNodule] = useState(null);
   const [sliceCatalog, setSliceCatalog] = useState({});
   const [history, setHistory] = useState([]);
+  const [deletingScanId, setDeletingScanId] = useState(null);
+  const [historyError, setHistoryError] = useState(null);
   const pollRef = useRef(null);
 
   const stopPolling = useCallback(() => {
@@ -191,7 +193,11 @@ export default function App() {
   const loadHistory = useCallback(async () => {
     try {
       const res = await fetch(`${API}/scans`);
-      if (res.ok) { const data = await res.json(); setHistory(Array.isArray(data) ? data : []); }
+      if (res.ok) {
+        const data = await res.json();
+        setHistory(Array.isArray(data) ? data : []);
+        setHistoryError(null);
+      }
     } catch (_) {}
   }, []);
 
@@ -300,6 +306,7 @@ export default function App() {
 
   const openScan = useCallback(async (scan) => {
     stopPolling();
+    setHistoryError(null);
     setJobId(null);
     setSeriesuid(scan.seriesuid);
     setStatus("SUCCESS");
@@ -316,6 +323,35 @@ export default function App() {
     const initialIndices = catalog.axial?.indices ?? [];
     setSliceIdx(initialIndices[0] ?? 0);
   }, [loadSliceCatalog, stopPolling]);
+
+  const handleDeleteScan = useCallback(async (scan) => {
+    setDeletingScanId(scan.seriesuid);
+    setHistoryError(null);
+    try {
+      const res = await fetch(`${API}/scans/${scan.seriesuid}`, { method: "DELETE" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || "Delete failed");
+      }
+
+      setHistory((prev) => prev.filter((entry) => entry.seriesuid !== scan.seriesuid));
+
+      if (seriesuid === scan.seriesuid) {
+        stopPolling();
+        setJobId(null);
+        setStatus(null);
+        setProgressStep(null);
+        setErrorMessage(null);
+        setStartedAt(null);
+        setFinishedAt(null);
+        resetScanState();
+      }
+    } catch (error) {
+      setHistoryError(error instanceof Error ? error.message : "Delete failed");
+    } finally {
+      setDeletingScanId(null);
+    }
+  }, [resetScanState, seriesuid, stopPolling]);
 
   const elapsedSeconds = startedAt
     ? Math.max(0, ((finishedAt ?? clockNow) - startedAt) / 1000)
@@ -480,6 +516,11 @@ export default function App() {
           {history.filter(s => s.status === "done").length > 0 && (
             <div style={{ padding: "0 16px 20px", borderTop: "1px solid var(--border)", paddingTop: 16 }}>
               <SectionLabel>History</SectionLabel>
+              {historyError && (
+                <div style={{ fontSize: 11, color: "#ff8a80", marginBottom: 8 }}>
+                  {historyError}
+                </div>
+              )}
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 {history.filter(s => s.status === "done").map((scan) => {
                   const isActive = scan.seriesuid === seriesuid;
@@ -487,33 +528,65 @@ export default function App() {
                   const time = new Date(scan.uploaded_at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
                   const n = scan.report?.n_candidates_final ?? 0;
                   return (
-                    <button
+                    <div
                       key={scan.seriesuid}
-                      onClick={() => openScan(scan)}
                       style={{
                         display: "flex",
-                        flexDirection: "column",
-                        alignItems: "flex-start",
-                        gap: 2,
-                        padding: "7px 10px",
+                        alignItems: "stretch",
+                        gap: 6,
                         background: isActive ? "var(--bg-3)" : "var(--bg-2)",
                         border: `1px solid ${isActive ? "var(--teal)" : "var(--border)"}`,
                         borderRadius: "var(--radius)",
-                        cursor: "pointer",
-                        textAlign: "left",
                         width: "100%",
                       }}
                     >
-                      <div style={{ fontSize: 10, color: "var(--text)", fontFamily: "var(--mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", width: "100%" }}>
-                        {scan.filename !== "unknown.zip" ? scan.filename : scan.seriesuid.slice(0, 8) + "…"}
+                      <button
+                        type="button"
+                        onClick={() => openScan(scan)}
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          alignItems: "flex-start",
+                          gap: 2,
+                          padding: "7px 10px 5px",
+                          background: "transparent",
+                          border: 0,
+                          cursor: "pointer",
+                          textAlign: "left",
+                          width: "100%",
+                        }}
+                      >
+                        <div style={{ fontSize: 10, color: "var(--text)", fontFamily: "var(--mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", width: "100%" }}>
+                          {scan.filename !== "unknown.zip" ? scan.filename : scan.seriesuid.slice(0, 8) + "…"}
+                        </div>
+                        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                          <span style={{ fontSize: 9, color: "var(--text-3)", fontFamily: "var(--mono)" }}>{date} {time}</span>
+                          <span style={{ fontSize: 9, color: n > 0 ? "var(--teal)" : "var(--text-3)", fontFamily: "var(--mono)" }}>
+                            {n > 0 ? `${n} nodule${n > 1 ? "s" : ""}` : "none"}
+                          </span>
+                        </div>
+                      </button>
+                      <div style={{ display: "flex", justifyContent: "flex-end", padding: "0 10px 8px" }}>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteScan(scan)}
+                          disabled={deletingScanId === scan.seriesuid}
+                          aria-label={`Delete ${scan.filename !== "unknown.zip" ? scan.filename : scan.seriesuid}`}
+                          style={{
+                            fontSize: 9,
+                            fontFamily: "var(--mono)",
+                            color: deletingScanId === scan.seriesuid ? "var(--text-3)" : "#ff8a80",
+                            background: "transparent",
+                            border: "1px solid var(--border)",
+                            borderRadius: 4,
+                            padding: "2px 6px",
+                            cursor: deletingScanId === scan.seriesuid ? "wait" : "pointer",
+                          }}
+                        >
+                          {deletingScanId === scan.seriesuid ? "DELETING" : "DELETE"}
+                        </button>
                       </div>
-                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                        <span style={{ fontSize: 9, color: "var(--text-3)", fontFamily: "var(--mono)" }}>{date} {time}</span>
-                        <span style={{ fontSize: 9, color: n > 0 ? "var(--teal)" : "var(--text-3)", fontFamily: "var(--mono)" }}>
-                          {n > 0 ? `${n} nodule${n > 1 ? "s" : ""}` : "none"}
-                        </span>
-                      </div>
-                    </button>
+                    </div>
                   );
                 })}
               </div>

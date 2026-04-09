@@ -9,6 +9,10 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+function getHistoryOpenButton(name) {
+  return screen.getAllByRole("button").find((button) => button.textContent?.includes(name) && !button.getAttribute("aria-label"));
+}
+
 describe("App", () => {
   it("renders the application header", () => {
     render(<App />);
@@ -140,7 +144,7 @@ describe("App", () => {
     render(<App />);
 
     await waitFor(() => expect(screen.getByText("History")).toBeInTheDocument());
-    await userEvent.click(screen.getByRole("button", { name: /existing\.zip/i }));
+    await userEvent.click(getHistoryOpenButton("existing.zip"));
     await waitFor(() => expect(screen.getByText("Series UID")).toBeInTheDocument());
     expect(screen.getByText("existing-series")).toBeInTheDocument();
 
@@ -150,6 +154,41 @@ describe("App", () => {
     await waitFor(() => expect(screen.getByText("Failed")).toBeInTheDocument());
     expect(screen.queryByText("Series UID")).not.toBeInTheDocument();
     expect(screen.queryByText("existing-series")).not.toBeInTheDocument();
+  });
+
+  it("deletes a history item and clears the viewer when deleting the active scan", async () => {
+    const historyScan = {
+      seriesuid: "existing-series",
+      filename: "existing.zip",
+      uploaded_at: "2026-04-01T12:00:00Z",
+      status: "done",
+      report: { n_candidates_final: 0, top_candidates: [] },
+    };
+
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url, options = {}) => {
+      if (url.includes("/scans") && (!options.method || options.method === "GET")) {
+        return Promise.resolve({ ok: true, json: async () => [historyScan] });
+      }
+      if (url.includes("/slices/existing-series/")) {
+        return Promise.resolve({ ok: true, json: async () => ({ view: "axial", indices: [0, 1], count: 2 }) });
+      }
+      if (url.includes("/scans/existing-series") && options.method === "DELETE") {
+        return Promise.resolve({ ok: true, json: async () => ({ status: "deleted", seriesuid: "existing-series" }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("History")).toBeInTheDocument());
+    await userEvent.click(getHistoryOpenButton("existing.zip"));
+    await waitFor(() => expect(screen.getByText("Series UID")).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole("button", { name: /delete existing\.zip/i }));
+
+    await waitFor(() => expect(screen.queryByText("existing.zip")).not.toBeInTheDocument());
+    expect(screen.queryByText("Series UID")).not.toBeInTheDocument();
+    expect(screen.getByText(/Drop a \.zip DICOM series here/)).toBeInTheDocument();
   });
 
   it("surfaces polling request failures instead of hanging in progress", async () => {

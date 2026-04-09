@@ -216,3 +216,4 @@ logs/
 # Web
 webapp/node_modules/
 webapp/test-results/
+test-results/

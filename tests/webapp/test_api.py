@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 
 from fastapi.testclient import TestClient
 import SimpleITK as sitk
@@ -74,3 +75,47 @@ def test_body_crop_image_reduces_obvious_air_background():
     assert cropped.GetOrigin() != image.GetOrigin()
     arr = sitk.GetArrayFromImage(cropped)
     assert arr.max() > -500.0
+
+
+def test_list_scans_returns_empty_when_output_dir_missing(monkeypatch, tmp_path):
+    monkeypatch.setattr(api, "OUTPUT_DIR", str(tmp_path / "missing_outputs"))
+
+    client = TestClient(api.app)
+    response = client.get("/scans")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_delete_scan_removes_output_and_upload_dirs(monkeypatch, tmp_path):
+    output_dir = tmp_path / "outputs"
+    upload_dir = tmp_path / "uploads"
+    monkeypatch.setattr(api, "OUTPUT_DIR", str(output_dir))
+    monkeypatch.setattr(api, "UPLOAD_DIR", str(upload_dir))
+
+    seriesuid = "scan-123"
+    scan_dir = output_dir / seriesuid
+    staged_dir = upload_dir / seriesuid
+    scan_dir.mkdir(parents=True)
+    staged_dir.mkdir(parents=True)
+    (scan_dir / "meta.json").write_text(json.dumps({"seriesuid": seriesuid}))
+    (scan_dir / "report.json").write_text(json.dumps({"n_candidates_final": 1}))
+    (staged_dir / "scan.zip").write_bytes(b"zip")
+
+    client = TestClient(api.app)
+    response = client.delete(f"/scans/{seriesuid}")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "deleted", "seriesuid": seriesuid}
+    assert not scan_dir.exists()
+    assert not staged_dir.exists()
+
+
+def test_delete_scan_404_for_missing_scan(monkeypatch, tmp_path):
+    monkeypatch.setattr(api, "OUTPUT_DIR", str(tmp_path / "outputs"))
+
+    client = TestClient(api.app)
+    response = client.delete("/scans/missing-scan")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Scan not found"

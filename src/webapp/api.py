@@ -13,6 +13,7 @@ import shutil
 import uuid
 import zipfile
 from collections import defaultdict
+import json
 from pathlib import Path
 
 import numpy as np
@@ -310,9 +311,12 @@ async def list_slices(uid: str, view: str):
 @app.get("/scans")
 async def list_scans():
     """Return all completed scans ordered newest-first."""
-    import json
     scans = []
-    for scan_dir in sorted(Path(OUTPUT_DIR).iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+    output_root = Path(OUTPUT_DIR)
+    if not output_root.exists():
+        return scans
+
+    for scan_dir in sorted(output_root.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
         if not scan_dir.is_dir():
             continue
         meta_path = scan_dir / "meta.json"
@@ -329,11 +333,26 @@ async def list_scans():
     return scans
 
 
+@app.delete("/scans/{uid}")
+async def delete_scan(uid: str):
+    """Delete a scan's persisted artefacts and upload staging directory."""
+    scan_dir = Path(OUTPUT_DIR) / uid
+    upload_dir = Path(UPLOAD_DIR) / uid
+
+    if not scan_dir.exists():
+        raise HTTPException(404, "Scan not found")
+
+    shutil.rmtree(scan_dir)
+    if upload_dir.exists():
+        shutil.rmtree(upload_dir)
+
+    return {"status": "deleted", "seriesuid": uid}
+
+
 @app.get("/report/{uid}")
 async def get_report(uid: str):
     """Return the inference report JSON for a scan."""
     report_path = Path(OUTPUT_DIR) / uid / "report.json"
     if not report_path.exists():
         raise HTTPException(404, "Report not found")
-    import json
     return JSONResponse(json.loads(report_path.read_text()))

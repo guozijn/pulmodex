@@ -309,6 +309,7 @@ GET  /status/{job_id}                      poll Celery task state → {state, pr
 GET  /slices/{uid}/{view}?idx=N&layer=...  fetch rendered PNG slice layer
 GET  /slices/{uid}/{view}/index            list available slice indices for a view
 GET  /scans                                list all completed scans (scan history), newest first
+DELETE /scans/{uid}                        delete a saved scan and its rendered artefacts
 GET  /report/{uid}                         fetch JSON inference report for a scan
 ```
 
