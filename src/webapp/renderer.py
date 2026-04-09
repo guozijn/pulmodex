@@ -63,8 +63,8 @@ def _draw_candidates(
     candidates_on_slice: list[dict],
     spacing_yx: tuple[float, float],
     fp_threshold: float,
-    confident_color: tuple[int, int, int] = (255, 255, 0),
-    uncertain_color: tuple[int, int, int] = (255, 200, 0),
+    confident_color: tuple[int, int, int] = (0, 200, 255),
+    uncertain_color: tuple[int, int, int] = (0, 165, 255),
 ) -> np.ndarray:
     """Draw candidate square boxes and confidence scores.
 
@@ -113,8 +113,8 @@ def render_slices(
     fp_threshold: float = 0.5,
     window_level: int = -600,
     window_width: int = 1500,
-    confident_color: tuple[int, int, int] = (255, 255, 0),
-    uncertain_color: tuple[int, int, int] = (255, 200, 0),
+    confident_color: tuple[int, int, int] = (0, 200, 255),
+    uncertain_color: tuple[int, int, int] = (0, 165, 255),
 ) -> list[str]:
     """Render annotated PNG slices for all three views.
 
