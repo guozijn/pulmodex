@@ -12,5 +12,5 @@ webapp:
   window_level: -600
   window_width: 1500
   # Candidate box colours
-  confident_color: [0, 200, 255]  # orange-yellow in OpenCV BGR, >= fp_threshold
-  uncertain_color: [0, 165, 255]  # amber in OpenCV BGR, < fp_threshold
+  confident_color: [0, 255, 0]    # green in OpenCV BGR, >= fp_threshold
+  uncertain_color: [0, 180, 0]    # darker green in OpenCV BGR, < fp_threshold

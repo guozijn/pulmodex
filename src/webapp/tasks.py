@@ -129,9 +129,12 @@ def predict_task(self, mhd_path: str, output_dir: str, seriesuid: str) -> dict:
         # Render slices after inference
         self.update_state(state="PROGRESS", meta={"step": "rendering"})
         from src.webapp.renderer import render_slices
+        webapp_cfg = _load_webapp_config().get("webapp", {})
         render_slices(
             scan_output_dir=str(Path(output_dir) / seriesuid),
             fp_threshold=_pipeline.fp_threshold,
+            confident_color=tuple(webapp_cfg.get("confident_color", [0, 255, 0])),
+            uncertain_color=tuple(webapp_cfg.get("uncertain_color", [0, 180, 0])),
         )
 
         return {"status": "done", "report": report}
