@@ -134,13 +134,15 @@ describe("App", () => {
     await userEvent.upload(input, new File(["d"], "scan.zip", { type: "application/zip" }));
 
     await waitFor(() => expect(screen.getByText("Complete")).toBeInTheDocument(), { timeout: 4000 });
-    const img = screen.getByRole("img", { name: "slice 0" });
+    const img = await screen.findByRole("img", { name: "slice 0" });
     expect(img).toHaveAttribute("src", "/api/slices/series-raw/axial?idx=0&layer=base");
 
     const annotationsToggle = getLabeledToggle("Annotations", "ON");
     await userEvent.click(annotationsToggle);
 
-    expect(screen.getByRole("img", { name: "slice 0" })).toHaveAttribute("src", "/api/slices/series-raw/axial?idx=0&layer=raw");
+    await waitFor(() => {
+      expect(screen.getByRole("img", { name: "slice 0" })).toHaveAttribute("src", "/api/slices/series-raw/axial?idx=0&layer=raw");
+    });
   });
 
   it("shows backend failure details when polling returns FAILURE", async () => {
