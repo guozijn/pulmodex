@@ -233,6 +233,7 @@ export default function App() {
   const [showOverlay, setShowOverlay] = useState(false);
   const [overlayOpacity, setOverlayOpacity] = useState(0.30);
   const [selectedNodule, setSelectedNodule] = useState(null);
+  const [minDiameterMm, setMinDiameterMm] = useState(0);
   const [sliceCatalog, setSliceCatalog] = useState({});
   const [history, setHistory] = useState([]);
   const [deletingScanId, setDeletingScanId] = useState(null);
@@ -256,6 +257,7 @@ export default function App() {
     setShowAnnotations(true);
     setShowOverlay(false);
     setOverlayOpacity(0.30);
+    setMinDiameterMm(0);
     setActiveSidebarPanel("upload");
   }, []);
 
@@ -409,7 +411,7 @@ export default function App() {
     setShowAnnotations(true);
     setShowOverlay(false);
     setOverlayOpacity(0.30);
-    setActiveSidebarPanel(scan.report?.top_candidates?.length ? "findings" : "scan");
+    setActiveSidebarPanel(scan.report?.candidates?.length ? "findings" : "scan");
     const catalog = await loadSliceCatalog(scan.seriesuid);
     const initialIndices = catalog.axial?.indices ?? [];
     setSliceIdx(initialIndices[0] ?? 0);
@@ -477,12 +479,17 @@ export default function App() {
     ? `${API}/slices/${seriesuid}/${activeView}?idx=${sliceIdx}&layer=overlay`
     : null;
 
-  const candidates = report?.top_candidates ?? [];
+  const candidates = report?.candidates ?? [];
+  const maxDiameterMm = candidates.length > 0
+    ? Math.ceil(Math.max(...candidates.map((c) => c.diameter_mm ?? 0)))
+    : 30;
+  const filteredCandidates = candidates.filter((c) => (c.diameter_mm ?? 0) >= minDiameterMm);
+
   const historyDone = history.filter((s) => s.status === "done");
   const sidebarItems = [
     { id: "upload", label: "Upload" },
     { id: "scan", label: "Scan", badge: seriesuid ? "1" : "" },
-    { id: "findings", label: "Findings", badge: candidates.length ? String(candidates.length) : "" },
+    { id: "findings", label: "Findings", badge: filteredCandidates.length ? String(filteredCandidates.length) : "" },
     { id: "history", label: "History", badge: historyDone.length ? String(historyDone.length) : "" },
   ];
 
@@ -611,17 +618,36 @@ export default function App() {
                       showAnnotations={showAnnotations}
                       onToggleAnnotations={() => setShowAnnotations((prev) => !prev)}
                     />
+                    <div style={{ marginBottom: 16 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 7 }}>
+                        <label style={{ fontSize: 11, color: "var(--text-2)" }}>Min diameter</label>
+                        <span style={{ fontSize: 11, color: "var(--teal)", fontFamily: "var(--mono)" }}>
+                          {minDiameterMm > 0 ? `>= ${minDiameterMm.toFixed(1)} mm` : "All"}
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={maxDiameterMm}
+                        step={0.5}
+                        value={minDiameterMm}
+                        onChange={(e) => setMinDiameterMm(Number(e.target.value))}
+                        style={{ width: "100%", cursor: "pointer" }}
+                      />
+                    </div>
                     <NoduleList
-                      candidates={candidates}
+                      candidates={filteredCandidates}
                       selected={selectedNodule}
                       onSelect={(c) => {
                         setSelectedNodule(c);
                         setSliceIdx(resolveCandidateSlice(c, activeView));
                       }}
                     />
-                    {candidates.length === 0 && (
+                    {filteredCandidates.length === 0 && (
                       <div style={{ fontSize: 11, color: "var(--text-3)", padding: "6px 0" }}>
-                        No nodules detected.
+                        {candidates.length === 0
+                          ? "No nodules detected."
+                          : "No nodules match the current filter."}
                       </div>
                     )}
                   </>

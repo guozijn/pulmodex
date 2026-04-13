@@ -89,11 +89,16 @@ def _draw_candidates(
         color = confident_color if prob >= fp_threshold else uncertain_color
         # Main square box
         cv2.rectangle(img, top_left, bottom_right, (*color, 255), thickness=1, lineType=cv2.LINE_AA)
-        # Score label with dark shadow for readability
-        label = f"{prob:.2f}"
+        # Score + diameter label with dark shadow for readability
+        prob_label = f"{prob * 100:.0f}%"
+        diam_label = f"{diam_mm:.1f}mm"
         lx, ly = cx + half_w_px + 4, cy + 4
-        cv2.putText(img, label, (lx + 1, ly + 1), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0, 255), 2, cv2.LINE_AA)
-        cv2.putText(img, label, (lx, ly), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (*color, 255), 1, cv2.LINE_AA)
+        font, scale, thick = cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1
+        line_gap = 14
+        for row, text in enumerate((prob_label, diam_label)):
+            y = ly + row * line_gap
+            cv2.putText(img, text, (lx + 1, y + 1), font, scale, (0, 0, 0, 255), 2, cv2.LINE_AA)
+            cv2.putText(img, text, (lx, y), font, scale, (*color, 255), thick, cv2.LINE_AA)
     return img
 
 

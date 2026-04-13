@@ -260,10 +260,7 @@ class InferencePipeline:
             "seriesuid": seriesuid,
             "n_candidates_stage1": len(candidates),
             "n_candidates_final": len(final_candidates),
-            "top_candidates": [
-                _candidate_payload(c)
-                for c in final_candidates[:5]
-            ],
+            "candidates": [_candidate_payload(c) for c in final_candidates],
         }
         (out_path / "report.json").write_text(json.dumps(report, indent=2))
 

@@ -4,7 +4,7 @@ const MOCK_JOB_ID = "e2e-job-001";
 const MOCK_SERIESUID = "e2e-series-001";
 
 const MOCK_REPORT = {
-  top_candidates: [
+  candidates: [
     {
       fp_prob: 0.91,
       diameter_mm: 9.2,
@@ -193,7 +193,7 @@ test.describe("Viewer interaction", () => {
     await expect(page.getByText("Heatmap overlay")).toBeVisible();
     const toggle = labeledButton(page, "Heatmap overlay", "OFF");
     await expect(toggle).toBeVisible();
-    const slider = page.locator("input[type='range']");
+    const slider = page.locator("input[type='range']").first();
     await expect(slider).toBeVisible();
     await expect(slider).toBeDisabled();
     await toggle.click();

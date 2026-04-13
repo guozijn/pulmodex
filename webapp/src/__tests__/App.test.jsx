@@ -95,7 +95,7 @@ describe("App", () => {
         if (url.includes("/slices/")) {
           return Promise.resolve({ ok: true, json: () => Promise.resolve({ view: "axial", indices: [0, 1], count: 2 }) });
         }
-        return Promise.resolve({ ok: true, json: () => Promise.resolve({ top_candidates: [] }) });
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ candidates: [] }) });
       }));
 
       render(<App />);
@@ -126,7 +126,7 @@ describe("App", () => {
       if (url.includes("/slices/")) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve({ view: "axial", indices: [0, 1], count: 2 }) });
       }
-      return Promise.resolve({ ok: true, json: () => Promise.resolve({ top_candidates: [] }) });
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ candidates: [] }) });
     }));
 
     render(<App />);
@@ -180,7 +180,7 @@ describe("App", () => {
       filename: "existing.zip",
       uploaded_at: "2026-04-01T12:00:00Z",
       status: "done",
-      report: { n_candidates_final: 0, top_candidates: [] },
+      report: { n_candidates_final: 0, candidates: [] },
     };
 
     vi.stubGlobal("fetch", vi.fn().mockImplementation((url) => {
@@ -219,7 +219,7 @@ describe("App", () => {
       filename: "existing.zip",
       uploaded_at: "2026-04-01T12:00:00Z",
       status: "done",
-      report: { n_candidates_final: 0, top_candidates: [] },
+      report: { n_candidates_final: 0, candidates: [] },
     };
 
     vi.stubGlobal("fetch", vi.fn().mockImplementation((url, options = {}) => {
