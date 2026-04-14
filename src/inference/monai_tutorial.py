@@ -16,6 +16,7 @@ from monai.apps.detection.transforms.dictionary import (
     ClipBoxToImaged,
     ConvertBoxModed,
 )
+from monai.apps.detection.transforms.array import ClipBoxToImage
 from monai.apps.detection.utils.anchor_utils import AnchorGeneratorWithAnchorShape
 from monai.transforms import (
     Compose,
@@ -76,6 +77,7 @@ class MONAITutorialDetectionPipeline:
         self.nms_thresh = float(nms_thresh)
         self.gt_box_mode = gt_box_mode
         self.amp = self.device.type == "cuda"
+        self.raw_box_clipper = ClipBoxToImage(remove_empty=True)
 
         self.preprocessing, self.postprocessing = self._build_transforms()
         self.detector = self._build_detector()
@@ -197,7 +199,8 @@ class MONAITutorialDetectionPipeline:
         return vol_zyx, spacing_xyz[::-1]
 
     def _detect_candidates(self, item: dict[str, Any]) -> list[dict[str, Any]]:
-        image = item["image"].to(self.device)
+        image_for_detection = item["image"].as_tensor() if hasattr(item["image"], "as_tensor") else item["image"]
+        image = image_for_detection.to(self.device)
         use_inferer = bool(image[0, ...].numel() >= int(np.prod(self.val_patch_size)))
 
         with torch.inference_mode():
@@ -222,6 +225,7 @@ class MONAITutorialDetectionPipeline:
             if hasattr(prediction[self.detector.target_label_key], "detach")
             else np.asarray(prediction[self.detector.target_label_key])
         )
+        aligned_raw_boxes = self._clip_raw_boxes_to_image(item, raw_boxes)
 
         processed = self.postprocessing(
             {
@@ -245,8 +249,8 @@ class MONAITutorialDetectionPipeline:
         candidates: list[dict[str, Any]] = []
         for i, (box, score, label) in enumerate(zip(boxes, scores, labels)):
             coord_x, coord_y, coord_z, width_mm, height_mm, depth_mm = [float(v) for v in box.tolist()]
-            if i < len(raw_boxes):
-                rb = raw_boxes[i]
+            if i < len(aligned_raw_boxes):
+                rb = aligned_raw_boxes[i]
                 vox_x = (float(rb[0]) + float(rb[3])) / 2.0
                 vox_y = (float(rb[1]) + float(rb[4])) / 2.0
                 vox_z = (float(rb[2]) + float(rb[5])) / 2.0
@@ -268,6 +272,21 @@ class MONAITutorialDetectionPipeline:
             )
 
         return sorted(candidates, key=lambda c: c["prob"], reverse=True)
+
+    def _clip_raw_boxes_to_image(self, item: dict[str, Any], raw_boxes: np.ndarray) -> np.ndarray:
+        raw_boxes = np.asarray(raw_boxes)
+        if raw_boxes.size == 0:
+            return raw_boxes.reshape(0, 6)
+        if raw_boxes.ndim == 1:
+            raw_boxes = raw_boxes.reshape(1, -1)
+
+        image = item["image"]
+        spatial_size = image.shape[1:]
+        dummy_labels = np.zeros(raw_boxes.shape[0], dtype=np.int64)
+        clipped_boxes, _ = self.raw_box_clipper(raw_boxes, dummy_labels, spatial_size)
+        if hasattr(clipped_boxes, "detach"):
+            return clipped_boxes.detach().cpu().numpy()
+        return np.asarray(clipped_boxes)
 
     def _fp_filter(self, vol: np.ndarray, candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if self.fp_model is None:
