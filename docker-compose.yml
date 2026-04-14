@@ -20,10 +20,12 @@ services:
     volumes:
       - ./checkpoints:/app/checkpoints:ro
       - ./outputs:/app/outputs
+      - ./uploads:/app/uploads
     depends_on:
       - redis
     environment:
       DEVICE: cpu   # API is CPU-only; GPU work runs in worker
+      UPLOAD_DIR: /app/uploads
 
   worker:
     <<: *common

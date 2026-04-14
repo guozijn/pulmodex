@@ -53,11 +53,11 @@ export default function UploadZone({ onUpload, disabled, uploading = false }) {
         </div>
       </div>
       <p style={{ fontSize: 12, color: "var(--text-2)", lineHeight: 1.5 }}>
-        {uploading ? "Uploading scan…" : disabled ? "Processing…" : "Drop a .zip DICOM series here or click to upload"}
+        {uploading ? "Uploading scan…" : disabled ? "Processing…" : "Drop a .zip DICOM series or .nii.gz volume here or click to upload"}
       </p>
       {!disabled && !uploading && (
         <div style={{ marginTop: 9, display: "flex", justifyContent: "center", gap: 4 }}>
-          {[".ZIP", "DICOM", "SERIES"].map((fmt) => (
+          {[".ZIP", ".NII.GZ", "CT"].map((fmt) => (
             <span
               key={fmt}
               style={{
@@ -78,7 +78,7 @@ export default function UploadZone({ onUpload, disabled, uploading = false }) {
       <input
         ref={inputRef}
         type="file"
-        accept=".zip"
+        accept=".zip,.nii.gz,application/gzip"
         style={{ display: "none" }}
         onChange={handleChange}
       />

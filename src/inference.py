@@ -75,13 +75,16 @@ def main() -> None:
             primary_patch_size=args.primary_patch_size,
         )
 
-    # Find all .mhd files in input_dir
-    mhd_files = list(Path(args.input_dir).rglob("*.mhd"))
-    log.info(f"Found {len(mhd_files)} scans in {args.input_dir}")
+    # Find staged scan volumes in input_dir.
+    scan_files = [
+        *Path(args.input_dir).rglob("*.mhd"),
+        *Path(args.input_dir).rglob("*.nii.gz"),
+    ]
+    log.info(f"Found {len(scan_files)} scans in {args.input_dir}")
 
-    for mhd_path in mhd_files:
-        seriesuid = mhd_path.stem
-        report = pipeline.run(str(mhd_path), args.output_dir, seriesuid)
+    for scan_path in scan_files:
+        seriesuid = scan_path.name[:-7] if scan_path.name.endswith(".nii.gz") else scan_path.stem
+        report = pipeline.run(str(scan_path), args.output_dir, seriesuid)
         log.info(f"  {seriesuid}: {report['n_candidates_final']} nodule(s)")
 
 

@@ -32,7 +32,7 @@ describe("App", () => {
 
   it("shows upload prompt in the initial state", () => {
     render(<App />);
-    expect(screen.getByText(/Drop a .zip DICOM series here/)).toBeInTheDocument();
+    expect(screen.getByText(/Drop a .zip DICOM series or .nii.gz volume here/)).toBeInTheDocument();
   });
 
   it("shows PENDING status and disables the upload zone after submitting a file", async () => {
@@ -193,7 +193,7 @@ describe("App", () => {
         return Promise.resolve({ ok: true, json: async () => ({ view: "axial", indices: [0, 1], count: 2 }) });
       }
       if (url.includes("/predict")) {
-        return Promise.resolve({ ok: false, json: async () => ({ detail: "Only .zip uploads are supported" }) });
+        return Promise.resolve({ ok: false, json: async () => ({ detail: "Only .zip or .nii.gz uploads are supported" }) });
       }
       return Promise.resolve({ ok: true, json: async () => ({}) });
     }));
@@ -249,7 +249,7 @@ describe("App", () => {
 
     await waitFor(() => expect(screen.queryByText("existing.zip")).not.toBeInTheDocument());
     expect(screen.queryByText("Series UID")).not.toBeInTheDocument();
-    expect(screen.getByText(/Drop a \.zip DICOM series here/)).toBeInTheDocument();
+    expect(screen.getByText(/Drop a \.zip DICOM series or \.nii\.gz volume here/)).toBeInTheDocument();
   });
 
   it("surfaces polling request failures instead of hanging in progress", async () => {

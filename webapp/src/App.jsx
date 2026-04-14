@@ -701,7 +701,8 @@ export default function App() {
                                 border: 0,
                                 cursor: "pointer",
                                 textAlign: "left",
-                                width: "100%",
+                                flex: "1 1 auto",
+                                minWidth: 0,
                               }}
                             >
                               <div style={{ fontSize: 10, color: "var(--text)", fontFamily: "var(--mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", width: "100%" }}>
@@ -714,7 +715,7 @@ export default function App() {
                                 </span>
                               </div>
                             </button>
-                            <div style={{ display: "flex", justifyContent: "flex-end", padding: "0 10px 8px" }}>
+                            <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", flexShrink: 0, padding: "0 10px 0 0" }}>
                               <button
                                 type="button"
                                 onClick={() => handleDeleteScan(scan)}

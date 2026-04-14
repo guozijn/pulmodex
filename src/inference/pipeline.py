@@ -26,7 +26,7 @@ import torch
 
 from src.data.preprocessing import (
     extract_patch,
-    load_mhd,
+    load_scan_volume,
     normalise_hu,
     resample_to_isotropic,
 )
@@ -204,11 +204,11 @@ class InferencePipeline:
             from src.interpretability import GradCAM
             self.saliency_fn = GradCAM(primary_model)
 
-    def run(self, mhd_path: str, output_dir: str, seriesuid: str) -> dict:
+    def run(self, scan_path: str, output_dir: str, seriesuid: str) -> dict:
         """Run full inference on a single CT scan.
 
         Args:
-            mhd_path: path to .mhd file
+            scan_path: path to a SimpleITK-readable scan volume
             output_dir: where to write artefacts
             seriesuid: scan identifier
 
@@ -218,8 +218,8 @@ class InferencePipeline:
         out_path = Path(output_dir) / seriesuid
         out_path.mkdir(parents=True, exist_ok=True)
 
-        log.info(f"Loading {mhd_path}")
-        vol, spacing, origin = load_mhd(mhd_path)
+        log.info(f"Loading {scan_path}")
+        vol, spacing, origin = load_scan_volume(scan_path)
         vol, spacing = resample_to_isotropic(vol, spacing)
         vol = normalise_hu(vol)
 

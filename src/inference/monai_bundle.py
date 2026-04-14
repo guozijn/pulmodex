@@ -75,8 +75,8 @@ class MONAIBundleDetectionPipeline:
         parser["bundle_root"] = str(self.bundle_dir)
         parser["device"] = self.device
         parser["amp"] = False
-        # We feed the bundle a temporary .mhd volume converted from the uploaded
-        # DICOM series, so force the LUNA16/raw branch that uses ITK image I/O.
+        # We feed the bundle a staged scan volume path, so force the LUNA16/raw
+        # branch that uses ITK image I/O.
         parser["whether_raw_luna16"] = True
         parser["whether_resampled_luna16"] = False
 
@@ -98,11 +98,11 @@ class MONAIBundleDetectionPipeline:
         self.detector.network = self.network
         self.detector.eval()
 
-    def run(self, mhd_path: str, output_dir: str, seriesuid: str) -> dict[str, Any]:
+    def run(self, scan_path: str, output_dir: str, seriesuid: str) -> dict[str, Any]:
         out_path = Path(output_dir) / seriesuid
         out_path.mkdir(parents=True, exist_ok=True)
 
-        item = self.preprocessing({"image": mhd_path})
+        item = self.preprocessing({"image": scan_path})
         vol_zyx, affine_ras_xyz, spacing_zyx = self._preprocessed_volume(item)
 
         detected_candidates = self._detect_candidates(item, affine_ras_xyz)

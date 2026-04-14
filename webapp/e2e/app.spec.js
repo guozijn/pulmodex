@@ -93,7 +93,7 @@ test.describe("Initial page", () => {
 
   test("shows the upload prompt", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByText(/Drop a .zip DICOM series here or click to upload/)).toBeVisible();
+    await expect(page.getByText(/Drop a .zip DICOM series or .nii.gz volume here or click to upload/)).toBeVisible();
   });
 
   test("renders all three view tabs", async ({ page }) => {

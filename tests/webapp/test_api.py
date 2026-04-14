@@ -13,7 +13,7 @@ def test_predict_accepts_zip_and_converts_before_enqueue(monkeypatch, tmp_path):
     monkeypatch.setattr(api, "UPLOAD_DIR", str(tmp_path / "uploads"))
     monkeypatch.setattr(api, "OUTPUT_DIR", str(tmp_path / "outputs"))
 
-    converted = tmp_path / "uploads" / "converted.mhd"
+    converted = tmp_path / "uploads" / "converted.nii.gz"
     observed = {}
 
     def fake_prepare(upload_path: Path, stored_file: Path, seriesuid: str) -> Path:
@@ -45,6 +45,42 @@ def test_predict_accepts_zip_and_converts_before_enqueue(monkeypatch, tmp_path):
     assert observed["delay_args"] == (str(converted), str(tmp_path / "outputs"), seriesuid)
 
 
+def test_predict_accepts_nifti_gz_and_converts_before_enqueue(monkeypatch, tmp_path):
+    monkeypatch.setattr(api, "UPLOAD_DIR", str(tmp_path / "uploads"))
+    monkeypatch.setattr(api, "OUTPUT_DIR", str(tmp_path / "outputs"))
+
+    uploaded = tmp_path / "uploads" / "scan.nii.gz"
+    observed = {}
+
+    def fake_prepare(upload_path: Path, stored_file: Path, seriesuid: str) -> Path:
+        observed["prepare_args"] = (upload_path, stored_file, seriesuid)
+        return uploaded
+
+    class FakeTask:
+        id = "job-nifti"
+
+    def fake_delay(scan_path: str, output_dir: str, seriesuid: str) -> FakeTask:
+        observed["delay_args"] = (scan_path, output_dir, seriesuid)
+        return FakeTask()
+
+    monkeypatch.setattr(api, "_prepare_scan_input", fake_prepare)
+    monkeypatch.setattr(api.predict_task, "delay", fake_delay)
+
+    client = TestClient(api.app)
+    response = client.post(
+        "/predict",
+        files={"file": ("scan.nii.gz", b"nifti-data", "application/gzip")},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["job_id"] == "job-nifti"
+
+    upload_path, stored_file, seriesuid = observed["prepare_args"]
+    assert stored_file == upload_path / "scan.nii.gz"
+    assert observed["delay_args"] == (str(uploaded), str(tmp_path / "outputs"), seriesuid)
+
+
 def test_predict_rejects_unsupported_upload(monkeypatch, tmp_path):
     monkeypatch.setattr(api, "UPLOAD_DIR", str(tmp_path / "uploads"))
 
@@ -55,7 +91,41 @@ def test_predict_rejects_unsupported_upload(monkeypatch, tmp_path):
     )
 
     assert response.status_code == 400
-    assert response.json()["detail"] == "Only .zip uploads are supported"
+    assert response.json()["detail"] == "Only .zip or .nii.gz uploads are supported"
+
+
+def test_prepare_scan_input_passes_through_nifti_gz(monkeypatch, tmp_path):
+    captured = {}
+    expected = tmp_path / "upload" / "scan.nii.gz"
+
+    def fake_validate_nifti(stored_file: Path) -> Path:
+        captured["args"] = stored_file
+        return expected
+
+    monkeypatch.setattr(api, "_validate_nifti_upload", fake_validate_nifti)
+
+    upload_dir = tmp_path / "upload"
+    upload_dir.mkdir()
+    stored_file = upload_dir / "scan.nii.gz"
+    stored_file.write_bytes(b"gz")
+
+    resolved = api._prepare_scan_input(upload_dir, stored_file, "scan-123")
+
+    assert resolved == expected
+    assert captured["args"] == stored_file
+
+
+def test_validate_nifti_upload_rejects_unreadable_file(tmp_path):
+    bad_nifti = tmp_path / "scan.nii.gz"
+    bad_nifti.write_bytes(b"not-a-real-nifti")
+
+    try:
+        api._validate_nifti_upload(bad_nifti)
+    except api.HTTPException as exc:
+        assert exc.status_code == 400
+        assert exc.detail == "Uploaded .nii.gz file could not be read"
+    else:
+        raise AssertionError("Expected unreadable .nii.gz upload to raise HTTPException")
 
 
 def test_body_crop_image_reduces_obvious_air_background():

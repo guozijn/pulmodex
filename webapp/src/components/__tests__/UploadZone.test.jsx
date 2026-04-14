@@ -7,7 +7,7 @@ import UploadZone from "../UploadZone";
 describe("UploadZone", () => {
   it("shows upload prompt when not disabled", () => {
     render(<UploadZone onUpload={vi.fn()} disabled={false} />);
-    expect(screen.getByText(/Drop a .zip DICOM series here or click to upload/)).toBeInTheDocument();
+    expect(screen.getByText(/Drop a .zip DICOM series or .nii.gz volume here or click to upload/)).toBeInTheDocument();
   });
 
   it("shows processing message when disabled", () => {
@@ -28,12 +28,13 @@ describe("UploadZone", () => {
     await userEvent.upload(input, file);
     expect(onUpload).toHaveBeenCalledWith(file);
     expect(input.value).toBe("");
+    expect(input).toHaveAttribute("accept", ".zip,.nii.gz,application/gzip");
   });
 
   it("calls onUpload with dropped file when not disabled", () => {
     const onUpload = vi.fn();
     render(<UploadZone onUpload={onUpload} disabled={false} />);
-    const dropZone = screen.getByText(/Drop a .zip DICOM series here/).closest("div");
+    const dropZone = screen.getByText(/Drop a .zip DICOM series or .nii.gz volume here/).closest("div");
     const file = new File(["data"], "scan.zip", { type: "application/zip" });
     fireEvent.drop(dropZone, { dataTransfer: { files: [file] } });
     expect(onUpload).toHaveBeenCalledWith(file);

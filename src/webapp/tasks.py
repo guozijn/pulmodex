@@ -117,11 +117,11 @@ _pipeline = None  # module-level singleton in worker
 
 
 @celery_app.task(bind=True, name="pulmodex.predict")
-def predict_task(self, mhd_path: str, output_dir: str, seriesuid: str) -> dict:
+def predict_task(self, scan_path: str, output_dir: str, seriesuid: str) -> dict:
     """Run inference pipeline on a single CT scan.
 
     Args:
-        mhd_path: absolute path to .mhd file (uploaded to worker volume)
+        scan_path: absolute path to the staged scan volume file
         output_dir: base output directory
         seriesuid: scan identifier used for artefact sub-folder
 
@@ -134,7 +134,7 @@ def predict_task(self, mhd_path: str, output_dir: str, seriesuid: str) -> dict:
 
     try:
         self.update_state(state="PROGRESS", meta={"step": "detection"})
-        report = _pipeline.run(mhd_path, output_dir, seriesuid)
+        report = _pipeline.run(scan_path, output_dir, seriesuid)
 
         # Render slices after inference
         self.update_state(state="PROGRESS", meta={"step": "rendering"})

@@ -30,10 +30,16 @@ def load_image_volume(image_path: str) -> tuple[np.ndarray, np.ndarray, np.ndarr
     return vol_xyz, spacing_zyx, origin_zyx
 
 
-def load_mhd(mhd_path: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Load a .mhd/.raw CT volume via SimpleITK."""
+def load_scan_volume(scan_path: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Load a SimpleITK-readable CT volume."""
 
-    return load_image_volume(mhd_path)
+    return load_image_volume(scan_path)
+
+
+def load_mhd(mhd_path: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Backward-compatible alias for generic scan loading."""
+
+    return load_scan_volume(mhd_path)
 
 
 def normalise_hu(vol: np.ndarray) -> np.ndarray:

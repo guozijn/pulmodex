@@ -1,7 +1,7 @@
 """FastAPI application.
 
 Endpoints:
-  POST /predict          — upload zipped DICOM series, enqueue Celery job → {job_id}
+  POST /predict          — upload zipped DICOM series or .nii.gz volume, enqueue Celery job → {job_id}
   GET  /status/{job_id}  — poll job status → {state, progress, result}
   GET  /slices/{uid}/{view} → list of PNG slice paths or streamed image
 """
@@ -28,19 +28,27 @@ from src.webapp.tasks import celery_app, predict_task
 app = FastAPI(title="Pulmodex API", version="0.1.0")
 
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "outputs")
-UPLOAD_DIR = "/tmp/pulmodex_uploads"
-_ALLOWED_SUFFIXES = {".zip"}
+UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/tmp/pulmodex_uploads")
+_ZIP_UPLOAD_KIND = "zip"
+_NIFTI_UPLOAD_KIND = "nifti"
+_ALLOWED_UPLOADS = {
+    ".zip": _ZIP_UPLOAD_KIND,
+    ".nii.gz": _NIFTI_UPLOAD_KIND,
+}
 
 
-def _validate_upload_name(filename: str | None) -> str:
+def _validate_upload_name(filename: str | None) -> tuple[str, str]:
     if not filename:
         raise HTTPException(400, "Uploaded file must have a filename")
 
     safe_name = Path(filename).name
-    suffix = Path(safe_name).suffix.lower()
-    if suffix not in _ALLOWED_SUFFIXES:
-        raise HTTPException(400, "Only .zip uploads are supported")
-    return safe_name
+    lowered_name = safe_name.lower()
+
+    for extension, upload_kind in _ALLOWED_UPLOADS.items():
+        if lowered_name.endswith(extension):
+            return safe_name, upload_kind
+
+    raise HTTPException(400, "Only .zip or .nii.gz uploads are supported")
 
 
 def _extract_upload_zip(zip_path: Path, dest_dir: Path) -> Path:
@@ -182,7 +190,7 @@ def _body_crop_image(
     return sitk.RegionOfInterest(image, size=crop_size, index=start)
 
 
-def _convert_dicom_series_to_mhd(series_files: list[Path], out_path: Path) -> Path:
+def _convert_dicom_series_to_nifti(series_files: list[Path], out_path: Path) -> Path:
     slices = [pydicom.dcmread(str(path), stop_before_pixels=True) for path in series_files]
     reader = sitk.ImageSeriesReader()
     reader.SetFileNames([str(path) for path in series_files])
@@ -199,15 +207,32 @@ def _convert_dicom_series_to_mhd(series_files: list[Path], out_path: Path) -> Pa
     return out_path
 
 
+def _validate_nifti_upload(nifti_path: Path) -> Path:
+    try:
+        sitk.ReadImage(str(nifti_path))
+    except RuntimeError as exc:
+        raise HTTPException(400, "Uploaded .nii.gz file could not be read") from exc
+    return nifti_path
+
+
 def _prepare_scan_input(upload_path: Path, stored_file: Path, seriesuid: str) -> Path:
-    extract_dir = _extract_upload_zip(stored_file, upload_path)
-    series_files = _find_series_files(extract_dir)
-    return _convert_dicom_series_to_mhd(series_files, upload_path / f"{seriesuid}.mhd")
+    stored_name = stored_file.name.lower()
+
+    if stored_name.endswith(".zip"):
+        out_path = upload_path / f"{seriesuid}.nii.gz"
+        extract_dir = _extract_upload_zip(stored_file, upload_path)
+        series_files = _find_series_files(extract_dir)
+        return _convert_dicom_series_to_nifti(series_files, out_path)
+
+    if stored_name.endswith(".nii.gz"):
+        return _validate_nifti_upload(stored_file)
+
+    raise HTTPException(400, "Only .zip or .nii.gz uploads are supported")
 
 
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):
-    """Upload a zipped DICOM series and enqueue inference.
+    """Upload a zipped DICOM series or .nii.gz volume and enqueue inference.
 
     Returns:
         {"job_id": str}
@@ -216,7 +241,7 @@ async def predict(file: UploadFile = File(...)):
     upload_path = Path(UPLOAD_DIR) / seriesuid
     upload_path.mkdir(parents=True, exist_ok=True)
 
-    safe_name = _validate_upload_name(file.filename)
+    safe_name, _ = _validate_upload_name(file.filename)
     dest = upload_path / safe_name
     with dest.open("wb") as f:
         shutil.copyfileobj(file.file, f)
