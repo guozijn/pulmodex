@@ -19,7 +19,7 @@ Both expose `forward(x) -> {"seg": mask, "logits": raw}`.
 **Project-native inference** is two-stage: sliding-window segmentation → false-positive reduction (3D CNN on 32³ patches, OHEM training).
 
 **MONAI RetinaNet inference** supports two MONAI-style detector sources as the primary detector, followed by the same optional local FP reduction stage:
-- a MONAI bundle directory or its `models/model.pt` file
+- a MONAI bundle directory
 - a standalone TorchScript `.pt` file produced by the MONAI LUNA16 tutorial `luna16_training.py`
 
 **Datasets:** LUNA16 (10-fold CV, primary) · LIDC-IDRI (≥3/4 radiologist consensus, secondary)
@@ -72,10 +72,17 @@ npm --prefix webapp install
 
 ```bash
 cp .env.example .env
-# edit .env: set DEVICE, MODEL_CHECKPOINT, FP_CHECKPOINT
+# edit .env: set DEVICE, MODEL_CHECKPOINT, MODEL_BACKEND, FP_CHECKPOINT
 ```
 
-`MODEL_CHECKPOINT` accepts either a project `.ckpt` file, a MONAI bundle directory, a MONAI `models/model.pt` file, or a standalone MONAI tutorial TorchScript `.pt` file.
+`MODEL_CHECKPOINT` accepts either a project `.ckpt` file, a MONAI bundle directory, or a standalone MONAI tutorial TorchScript `.pt` file.
+
+`MODEL_BACKEND` controls how the worker interprets `MODEL_CHECKPOINT`:
+
+- `auto`: infer from the path
+- `native`: force the project-native checkpoint loader
+- `monai_bundle`: treat `MODEL_CHECKPOINT` as a MONAI bundle directory
+- `monai_tutorial`: treat `MODEL_CHECKPOINT` as a standalone MONAI tutorial TorchScript model
 
 ### Development workflow
 
@@ -206,7 +213,6 @@ pulmodex infer \
 
 - a project checkpoint such as `checkpoints/hybrid_best.ckpt`
 - a MONAI bundle directory such as `checkpoints/monai_lung_nodule_ct_detection_0.6.8`
-- a MONAI bundle weights file such as `checkpoints/monai_lung_nodule_ct_detection_0.6.8/models/model.pt`
 - a MONAI tutorial TorchScript weights file such as `/home/zijianguo/tutorials/detection/model.pt`
 
 When using a MONAI bundle, the main detection path comes from the bundle and `--fp_checkpoint` is still used for the local false-positive reduction stage.
@@ -276,16 +282,16 @@ Important `.env` groups:
 - API / worker process settings:
   `API_WORKERS`, `CELERY_WORKER_CONCURRENCY`, `CELERY_WORKER_LOGLEVEL`
 - Primary detection model:
-  `MODEL_CHECKPOINT`
-  This can point to either a project `.ckpt` file, a MONAI bundle directory, a MONAI `models/model.pt` file, or a MONAI tutorial TorchScript `.pt` file.
+  `MODEL_CHECKPOINT`, `MODEL_BACKEND`
+  `MODEL_CHECKPOINT` can point to either a project `.ckpt` file, a MONAI bundle directory, or a MONAI tutorial TorchScript `.pt` file. Set `MODEL_BACKEND=monai_bundle` to force bundle mode, `MODEL_BACKEND=monai_tutorial` to force tutorial TorchScript mode, or `MODEL_BACKEND=native` to force the project-native loader. Leave it at `auto` to use path-based detection.
 - False-positive reduction model:
   `FP_CHECKPOINT`, `FP_THRESHOLD`
 - Project-native candidate generation knobs:
   `CANDIDATE_THRESHOLD`, `MIN_CANDIDATE_VOXELS`, `PRIMARY_PATCH_SIZE`
 
-If `MODEL_CHECKPOINT` points at a MONAI bundle directory or its `models/model.pt` file, the worker uses the bundle's own preprocessing and detection config and then applies the local FP reduction model.
+If `MODEL_BACKEND=monai_bundle`, `MODEL_CHECKPOINT` must point at a MONAI bundle directory. The worker uses the bundle's own preprocessing and detection config and then applies the local FP reduction model.
 
-If `MODEL_CHECKPOINT` points at a standalone `.pt` file produced by the MONAI tutorial `luna16_training.py`, the worker loads it as a TorchScript RetinaNet detector using the tutorial's LUNA16 defaults for anchors, score thresholds, and sliding-window patch size.
+If `MODEL_BACKEND=monai_tutorial`, or if `MODEL_BACKEND=auto` and `MODEL_CHECKPOINT` points at a standalone `.pt` file produced by the MONAI tutorial `luna16_training.py`, the worker loads it as a TorchScript RetinaNet detector using the tutorial's LUNA16 defaults for anchors, score thresholds, and sliding-window patch size.
 
 For local development, start Redis in Docker and run the API, worker, and frontend on the host:
 

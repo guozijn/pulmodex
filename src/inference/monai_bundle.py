@@ -40,36 +40,28 @@ def _materialize_bundle_components(
     detector = parser.get_parsed_content("detector")
     parser["detector"] = detector
 
-    postprocessing = parser.get_parsed_content("postprocessing")
-    inferer = parser.get_parsed_content("inferer")
+    # Apply detector side effects before building the inferer. RetinaNetInferer
+    # snapshots detector.inferer.roi_size during __init__; if detector_ops runs
+    # afterward, sliding_window_size stays None and the adapter falls back to a
+    # direct whole-volume forward that does not match `monai.bundle run`.
     _ = parser.get_parsed_content("detector_ops")
+    inferer = parser.get_parsed_content("inferer")
+    postprocessing = parser.get_parsed_content("postprocessing")
     return preprocessing, network, detector, postprocessing, inferer
 
 
 def is_monai_bundle_path(path: str | Path) -> bool:
-    """Return True when path looks like a MONAI bundle dir or its weights file."""
+    """Return True when path looks like a MONAI bundle directory."""
     candidate = Path(path)
-
-    if candidate.is_dir():
-        return (candidate / "configs" / "inference.json").exists()
-
-    if candidate.is_file() and candidate.suffix == ".pt" and candidate.parent.name == "models":
-        return (candidate.parents[1] / "configs" / "inference.json").exists()
-
-    return False
+    return candidate.is_dir() and (candidate / "configs" / "inference.json").exists()
 
 
 def _resolve_bundle_paths(path: str | Path) -> tuple[Path, Path]:
-    """Resolve MONAI bundle root and weights file from a bundle dir or model path."""
+    """Resolve MONAI bundle root and weights file from a bundle directory."""
     candidate = Path(path).resolve()
 
     if candidate.is_dir() and (candidate / "configs" / "inference.json").exists():
         return candidate, candidate / "models" / "model.pt"
-
-    if candidate.is_file() and candidate.suffix == ".pt" and candidate.parent.name == "models":
-        bundle_dir = candidate.parents[1]
-        if (bundle_dir / "configs" / "inference.json").exists():
-            return bundle_dir, candidate
 
     raise ValueError(f"Not a MONAI bundle path: {path}")
 

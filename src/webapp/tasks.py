@@ -49,6 +49,17 @@ def _resolve_device(requested: str) -> str:
     return normalized
 
 
+def _resolve_model_backend(requested: str) -> str:
+    normalized = requested.strip().lower().replace("-", "_")
+    valid = {"auto", "native", "monai_bundle", "monai_tutorial"}
+    if normalized not in valid:
+        raise ValueError(
+            "Invalid MODEL_BACKEND %r; expected one of: auto, native, monai_bundle, monai_tutorial"
+            % requested
+        )
+    return normalized
+
+
 def _get_pipeline():
     """Lazy-load the primary detection pipeline (heavy, only in worker process)."""
     import torch
@@ -64,6 +75,7 @@ def _get_pipeline():
 
     webapp_cfg = _load_webapp_config().get("webapp", {})
     device = _resolve_device(_env_value("DEVICE", "cuda" if torch.cuda.is_available() else "cpu"))
+    model_backend = _resolve_model_backend(_env_value("MODEL_BACKEND", "auto"))
     primary_checkpoint = _env_value(
         "MODEL_CHECKPOINT",
         str(webapp_cfg.get("primary_checkpoint", "checkpoints/hybrid_best.ckpt")),
@@ -99,7 +111,9 @@ def _get_pipeline():
     else:
         log.warning("FP checkpoint not found at %s — FP reduction stage will be skipped", fp_ckpt)
 
-    if is_monai_bundle_path(primary_checkpoint):
+    if model_backend == "monai_bundle" or (
+        model_backend == "auto" and is_monai_bundle_path(primary_checkpoint)
+    ):
         return MONAIBundleDetectionPipeline(
             bundle_dir=primary_checkpoint,
             fp_model=fp_model,
@@ -107,7 +121,9 @@ def _get_pipeline():
             device=device,
         )
 
-    if is_monai_tutorial_model_path(primary_checkpoint):
+    if model_backend == "monai_tutorial" or (
+        model_backend == "auto" and is_monai_tutorial_model_path(primary_checkpoint)
+    ):
         return MONAITutorialDetectionPipeline(
             model_path=primary_checkpoint,
             fp_model=fp_model,
