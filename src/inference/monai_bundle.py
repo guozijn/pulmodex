@@ -47,9 +47,31 @@ def _materialize_bundle_components(
 
 
 def is_monai_bundle_path(path: str | Path) -> bool:
-    """Return True when path looks like a MONAI bundle directory."""
-    bundle_dir = Path(path)
-    return bundle_dir.is_dir() and (bundle_dir / "configs" / "inference.json").exists()
+    """Return True when path looks like a MONAI bundle dir or its weights file."""
+    candidate = Path(path)
+
+    if candidate.is_dir():
+        return (candidate / "configs" / "inference.json").exists()
+
+    if candidate.is_file() and candidate.suffix == ".pt" and candidate.parent.name == "models":
+        return (candidate.parents[1] / "configs" / "inference.json").exists()
+
+    return False
+
+
+def _resolve_bundle_paths(path: str | Path) -> tuple[Path, Path]:
+    """Resolve MONAI bundle root and weights file from a bundle dir or model path."""
+    candidate = Path(path).resolve()
+
+    if candidate.is_dir() and (candidate / "configs" / "inference.json").exists():
+        return candidate, candidate / "models" / "model.pt"
+
+    if candidate.is_file() and candidate.suffix == ".pt" and candidate.parent.name == "models":
+        bundle_dir = candidate.parents[1]
+        if (bundle_dir / "configs" / "inference.json").exists():
+            return bundle_dir, candidate
+
+    raise ValueError(f"Not a MONAI bundle path: {path}")
 
 
 class MONAIBundleDetectionPipeline:
@@ -62,7 +84,7 @@ class MONAIBundleDetectionPipeline:
         fp_threshold: float = 0.5,
         device: str = "cpu",
     ) -> None:
-        self.bundle_dir = Path(bundle_dir).resolve()
+        self.bundle_dir, self.weights_path = _resolve_bundle_paths(bundle_dir)
         self.fp_model = fp_model.to(device).eval() if fp_model is not None else None
         self.fp_threshold = fp_threshold
         self.device = torch.device(device)
@@ -89,7 +111,7 @@ class MONAIBundleDetectionPipeline:
         ) = _materialize_bundle_components(parser, self.device)
 
         state_dict = torch.load(
-            self.bundle_dir / "models" / "model.pt",
+            self.weights_path,
             map_location=self.device,
             weights_only=True,
         )

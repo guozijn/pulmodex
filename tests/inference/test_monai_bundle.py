@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch
 
-from src.inference.monai_bundle import _materialize_bundle_components
+from src.inference.monai_bundle import _materialize_bundle_components, _resolve_bundle_paths, is_monai_bundle_path
 
 
 class _FakeNetwork:
@@ -57,3 +57,36 @@ def test_materialize_bundle_components_resolves_network_def_before_dependents() 
     assert parser["detector"] is detector
     assert postprocessing is parser.values["postprocessing"]
     assert inferer is parser.values["inferer"]
+
+
+def test_is_monai_bundle_path_accepts_bundle_directory(tmp_path) -> None:
+    bundle_dir = tmp_path / "bundle"
+    (bundle_dir / "configs").mkdir(parents=True)
+    (bundle_dir / "configs" / "inference.json").write_text("{}")
+
+    assert is_monai_bundle_path(bundle_dir) is True
+
+
+def test_is_monai_bundle_path_accepts_model_file_in_models_directory(tmp_path) -> None:
+    bundle_dir = tmp_path / "bundle"
+    (bundle_dir / "configs").mkdir(parents=True)
+    (bundle_dir / "models").mkdir(parents=True)
+    (bundle_dir / "configs" / "inference.json").write_text("{}")
+    model_path = bundle_dir / "models" / "model.pt"
+    model_path.write_bytes(b"weights")
+
+    assert is_monai_bundle_path(model_path) is True
+
+
+def test_resolve_bundle_paths_from_model_file(tmp_path) -> None:
+    bundle_dir = tmp_path / "bundle"
+    (bundle_dir / "configs").mkdir(parents=True)
+    (bundle_dir / "models").mkdir(parents=True)
+    (bundle_dir / "configs" / "inference.json").write_text("{}")
+    model_path = bundle_dir / "models" / "model.pt"
+    model_path.write_bytes(b"weights")
+
+    resolved_bundle_dir, resolved_model_path = _resolve_bundle_paths(model_path)
+
+    assert resolved_bundle_dir == bundle_dir.resolve()
+    assert resolved_model_path == model_path.resolve()

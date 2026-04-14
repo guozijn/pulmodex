@@ -40,7 +40,7 @@ def main() -> None:
     parser.add_argument(
         "--checkpoint",
         required=True,
-        help="Primary model source: project checkpoint or MONAI bundle directory",
+        help="Primary model source: project checkpoint, MONAI bundle directory, or MONAI models/model.pt file",
     )
     parser.add_argument("--fp_checkpoint", required=True, help="FP classifier checkpoint")
     parser.add_argument("--input_dir", default="data/processed")
