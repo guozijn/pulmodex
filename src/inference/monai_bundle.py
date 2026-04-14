@@ -18,6 +18,34 @@ from src.data.preprocessing import extract_patch
 from .pipeline import _candidate_payload
 
 
+def _materialize_bundle_components(
+    parser: ConfigParser,
+    device: torch.device,
+) -> tuple[Any, Any, Any, Any, Any]:
+    """Resolve bundle objects in a stable order across MONAI versions.
+
+    Some MONAI releases are sensitive to evaluating the `network` expression
+    directly when it depends on the sibling `network_def` local ref. Materialize
+    `network_def` eagerly and inject the concrete objects back into the parser
+    before resolving downstream components.
+    """
+    preprocessing = parser.get_parsed_content("preprocessing")
+
+    network_def = parser.get_parsed_content("network_def")
+    parser["network_def"] = network_def
+
+    network = network_def.to(device)
+    parser["network"] = network
+
+    detector = parser.get_parsed_content("detector")
+    parser["detector"] = detector
+
+    postprocessing = parser.get_parsed_content("postprocessing")
+    inferer = parser.get_parsed_content("inferer")
+    _ = parser.get_parsed_content("detector_ops")
+    return preprocessing, network, detector, postprocessing, inferer
+
+
 def is_monai_bundle_path(path: str | Path) -> bool:
     """Return True when path looks like a MONAI bundle directory."""
     bundle_dir = Path(path)
@@ -52,12 +80,13 @@ class MONAIBundleDetectionPipeline:
         parser["whether_raw_luna16"] = True
         parser["whether_resampled_luna16"] = False
 
-        self.preprocessing = parser.get_parsed_content("preprocessing")
-        self.network = parser.get_parsed_content("network")
-        self.detector = parser.get_parsed_content("detector")
-        self.postprocessing = parser.get_parsed_content("postprocessing")
-        self.inferer = parser.get_parsed_content("inferer")
-        _ = parser.get_parsed_content("detector_ops")
+        (
+            self.preprocessing,
+            self.network,
+            self.detector,
+            self.postprocessing,
+            self.inferer,
+        ) = _materialize_bundle_components(parser, self.device)
 
         state_dict = torch.load(
             self.bundle_dir / "models" / "model.pt",

@@ -39,6 +39,16 @@ def _load_webapp_config() -> dict:
     return OmegaConf.to_container(merged, resolve=True)
 
 
+def _resolve_device(requested: str) -> str:
+    import torch
+
+    normalized = requested.strip()
+    if normalized.startswith("cuda") and not torch.cuda.is_available():
+        log.warning("Requested device %s is unavailable in the worker; falling back to cpu", normalized)
+        return "cpu"
+    return normalized
+
+
 def _get_pipeline():
     """Lazy-load the primary detection pipeline (heavy, only in worker process)."""
     import torch
@@ -47,7 +57,7 @@ def _get_pipeline():
     from src.models.loading import load_checkpoint_model
 
     webapp_cfg = _load_webapp_config().get("webapp", {})
-    device = _env_value("DEVICE", "cuda" if torch.cuda.is_available() else "cpu")
+    device = _resolve_device(_env_value("DEVICE", "cuda" if torch.cuda.is_available() else "cpu"))
     primary_checkpoint = _env_value(
         "MODEL_CHECKPOINT",
         str(webapp_cfg.get("primary_checkpoint", "checkpoints/hybrid_best.ckpt")),
