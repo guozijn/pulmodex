@@ -44,9 +44,9 @@ def test_materialize_bundle_components_resolves_network_def_before_dependents() 
         "preprocessing",
         "network_def",
         "detector",
-        "postprocessing",
-        "inferer",
         "detector_ops",
+        "inferer",
+        "postprocessing",
     ]
     assert preprocessing is parser.values["preprocessing"]
     assert network is parser.values["network_def"]
@@ -67,7 +67,7 @@ def test_is_monai_bundle_path_accepts_bundle_directory(tmp_path) -> None:
     assert is_monai_bundle_path(bundle_dir) is True
 
 
-def test_is_monai_bundle_path_accepts_model_file_in_models_directory(tmp_path) -> None:
+def test_is_monai_bundle_path_rejects_model_file_in_models_directory(tmp_path) -> None:
     bundle_dir = tmp_path / "bundle"
     (bundle_dir / "configs").mkdir(parents=True)
     (bundle_dir / "models").mkdir(parents=True)
@@ -75,10 +75,10 @@ def test_is_monai_bundle_path_accepts_model_file_in_models_directory(tmp_path) -
     model_path = bundle_dir / "models" / "model.pt"
     model_path.write_bytes(b"weights")
 
-    assert is_monai_bundle_path(model_path) is True
+    assert is_monai_bundle_path(model_path) is False
 
 
-def test_resolve_bundle_paths_from_model_file(tmp_path) -> None:
+def test_resolve_bundle_paths_rejects_model_file(tmp_path) -> None:
     bundle_dir = tmp_path / "bundle"
     (bundle_dir / "configs").mkdir(parents=True)
     (bundle_dir / "models").mkdir(parents=True)
@@ -86,7 +86,9 @@ def test_resolve_bundle_paths_from_model_file(tmp_path) -> None:
     model_path = bundle_dir / "models" / "model.pt"
     model_path.write_bytes(b"weights")
 
-    resolved_bundle_dir, resolved_model_path = _resolve_bundle_paths(model_path)
-
-    assert resolved_bundle_dir == bundle_dir.resolve()
-    assert resolved_model_path == model_path.resolve()
+    try:
+        _resolve_bundle_paths(model_path)
+    except ValueError as exc:
+        assert "Not a MONAI bundle path" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError for direct model.pt bundle path")
