@@ -53,7 +53,13 @@ def _get_pipeline():
     """Lazy-load the primary detection pipeline (heavy, only in worker process)."""
     import torch
 
-    from src.inference import InferencePipeline, MONAIBundleDetectionPipeline, is_monai_bundle_path
+    from src.inference import (
+        InferencePipeline,
+        MONAIBundleDetectionPipeline,
+        MONAITutorialDetectionPipeline,
+        is_monai_bundle_path,
+        is_monai_tutorial_model_path,
+    )
     from src.models.loading import load_checkpoint_model
 
     webapp_cfg = _load_webapp_config().get("webapp", {})
@@ -96,6 +102,14 @@ def _get_pipeline():
     if is_monai_bundle_path(primary_checkpoint):
         return MONAIBundleDetectionPipeline(
             bundle_dir=primary_checkpoint,
+            fp_model=fp_model,
+            fp_threshold=fp_threshold,
+            device=device,
+        )
+
+    if is_monai_tutorial_model_path(primary_checkpoint):
+        return MONAITutorialDetectionPipeline(
+            model_path=primary_checkpoint,
             fp_model=fp_model,
             fp_threshold=fp_threshold,
             device=device,

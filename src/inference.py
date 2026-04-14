@@ -40,7 +40,7 @@ def main() -> None:
     parser.add_argument(
         "--checkpoint",
         required=True,
-        help="Primary model source: project checkpoint, MONAI bundle directory, or MONAI models/model.pt file",
+        help="Primary model source: project checkpoint, MONAI bundle directory, MONAI models/model.pt file, or MONAI tutorial TorchScript .pt file",
     )
     parser.add_argument("--fp_checkpoint", required=True, help="FP classifier checkpoint")
     parser.add_argument("--input_dir", default="data/processed")
@@ -54,11 +54,24 @@ def main() -> None:
 
     fp_model = load_fp_model(args.fp_checkpoint, args.device)
 
-    from src.inference import InferencePipeline, MONAIBundleDetectionPipeline, is_monai_bundle_path
+    from src.inference import (
+        InferencePipeline,
+        MONAIBundleDetectionPipeline,
+        MONAITutorialDetectionPipeline,
+        is_monai_bundle_path,
+        is_monai_tutorial_model_path,
+    )
 
     if is_monai_bundle_path(args.checkpoint):
         pipeline = MONAIBundleDetectionPipeline(
             bundle_dir=args.checkpoint,
+            fp_model=fp_model,
+            fp_threshold=args.fp_threshold,
+            device=args.device,
+        )
+    elif is_monai_tutorial_model_path(args.checkpoint):
+        pipeline = MONAITutorialDetectionPipeline(
+            model_path=args.checkpoint,
             fp_model=fp_model,
             fp_threshold=args.fp_threshold,
             device=args.device,

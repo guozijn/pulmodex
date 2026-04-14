@@ -18,7 +18,9 @@ Both expose `forward(x) -> {"seg": mask, "logits": raw}`.
 
 **Project-native inference** is two-stage: sliding-window segmentation → false-positive reduction (3D CNN on 32³ patches, OHEM training).
 
-**MONAI bundle inference** uses a pretrained 3D RetinaNet detector (e.g. `lung_nodule_ct_detection`) as the primary detector, followed by the same optional local FP reduction stage. Set `MODEL_CHECKPOINT` to either a MONAI bundle directory or its `models/model.pt` file to activate this path.
+**MONAI RetinaNet inference** supports two MONAI-style detector sources as the primary detector, followed by the same optional local FP reduction stage:
+- a MONAI bundle directory or its `models/model.pt` file
+- a standalone TorchScript `.pt` file produced by the MONAI LUNA16 tutorial `luna16_training.py`
 
 **Datasets:** LUNA16 (10-fold CV, primary) · LIDC-IDRI (≥3/4 radiologist consensus, secondary)
 
@@ -73,7 +75,7 @@ cp .env.example .env
 # edit .env: set DEVICE, MODEL_CHECKPOINT, FP_CHECKPOINT
 ```
 
-`MODEL_CHECKPOINT` accepts either a project `.ckpt` file, a MONAI bundle directory, or a MONAI `models/model.pt` file.
+`MODEL_CHECKPOINT` accepts either a project `.ckpt` file, a MONAI bundle directory, a MONAI `models/model.pt` file, or a standalone MONAI tutorial TorchScript `.pt` file.
 
 ### Development workflow
 
@@ -205,6 +207,7 @@ pulmodex infer \
 - a project checkpoint such as `checkpoints/hybrid_best.ckpt`
 - a MONAI bundle directory such as `checkpoints/monai_lung_nodule_ct_detection_0.6.8`
 - a MONAI bundle weights file such as `checkpoints/monai_lung_nodule_ct_detection_0.6.8/models/model.pt`
+- a MONAI tutorial TorchScript weights file such as `/home/zijianguo/tutorials/detection/model.pt`
 
 When using a MONAI bundle, the main detection path comes from the bundle and `--fp_checkpoint` is still used for the local false-positive reduction stage.
 
@@ -274,13 +277,15 @@ Important `.env` groups:
   `API_WORKERS`, `CELERY_WORKER_CONCURRENCY`, `CELERY_WORKER_LOGLEVEL`
 - Primary detection model:
   `MODEL_CHECKPOINT`
-  This can point to either a project `.ckpt` file, a MONAI bundle directory, or a MONAI `models/model.pt` file.
+  This can point to either a project `.ckpt` file, a MONAI bundle directory, a MONAI `models/model.pt` file, or a MONAI tutorial TorchScript `.pt` file.
 - False-positive reduction model:
   `FP_CHECKPOINT`, `FP_THRESHOLD`
 - Project-native candidate generation knobs:
   `CANDIDATE_THRESHOLD`, `MIN_CANDIDATE_VOXELS`, `PRIMARY_PATCH_SIZE`
 
 If `MODEL_CHECKPOINT` points at a MONAI bundle directory or its `models/model.pt` file, the worker uses the bundle's own preprocessing and detection config and then applies the local FP reduction model.
+
+If `MODEL_CHECKPOINT` points at a standalone `.pt` file produced by the MONAI tutorial `luna16_training.py`, the worker loads it as a TorchScript RetinaNet detector using the tutorial's LUNA16 defaults for anchors, score thresholds, and sliding-window patch size.
 
 For local development, start Redis in Docker and run the API, worker, and frontend on the host:
 
