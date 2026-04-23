@@ -7,6 +7,10 @@ import StatusBanner from "./components/StatusBanner";
 const API = "/api";
 const VIEW_NAMES = ["axial", "coronal", "sagittal"];
 
+function candidateProb(candidate) {
+  return typeof candidate?.fp_prob === "number" ? candidate.fp_prob : (candidate?.prob ?? 0);
+}
+
 function LungIcon({ size = 18 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 20 20" fill="none" aria-hidden="true">
@@ -142,81 +146,6 @@ function ViewTabs({ active, onChange }) {
   );
 }
 
-function OverlayControls({ showOverlay, annotationsEnabled, onToggleOverlay, overlayOpacity, onOpacityChange }) {
-  const overlayEnabled = annotationsEnabled && showOverlay;
-  return (
-    <div style={{ marginBottom: 16 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 7 }}>
-        <label style={{ fontSize: 11, color: "var(--text-2)" }}>Heatmap overlay</label>
-        <button
-          type="button"
-          onClick={onToggleOverlay}
-          disabled={!annotationsEnabled}
-          style={{
-            fontSize: 10,
-            fontFamily: "var(--mono)",
-            color: overlayEnabled ? "var(--teal)" : "var(--text-3)",
-            background: "transparent",
-            border: "1px solid var(--border)",
-            borderRadius: 4,
-            padding: "2px 6px",
-            cursor: annotationsEnabled ? "pointer" : "not-allowed",
-            opacity: annotationsEnabled ? 1 : 0.5,
-          }}
-        >
-          {overlayEnabled ? "ON" : "OFF"}
-        </button>
-      </div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 7 }}>
-        <label style={{ fontSize: 11, color: "var(--text-2)" }}>Opacity</label>
-        <span style={{ fontSize: 11, color: "var(--teal)", fontFamily: "var(--mono)" }}>
-          {Math.round(overlayOpacity * 100)}%
-        </span>
-      </div>
-      <input
-        type="range"
-        min={0}
-        max={1}
-        step={0.05}
-        value={overlayOpacity}
-        onChange={(e) => onOpacityChange(Number(e.target.value))}
-        disabled={!overlayEnabled}
-        style={{
-          width: "100%",
-          opacity: overlayEnabled ? 1 : 0.4,
-          cursor: overlayEnabled ? "pointer" : "not-allowed",
-        }}
-      />
-    </div>
-  );
-}
-
-function AnnotationControls({ showAnnotations, onToggleAnnotations }) {
-  return (
-    <div style={{ marginBottom: 16 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <label style={{ fontSize: 11, color: "var(--text-2)" }}>Annotations</label>
-        <button
-          type="button"
-          onClick={onToggleAnnotations}
-          style={{
-            fontSize: 10,
-            fontFamily: "var(--mono)",
-            color: showAnnotations ? "var(--teal)" : "var(--text-3)",
-            background: "transparent",
-            border: "1px solid var(--border)",
-            borderRadius: 4,
-            padding: "2px 6px",
-            cursor: "pointer",
-          }}
-        >
-          {showAnnotations ? "ON" : "OFF"}
-        </button>
-      </div>
-    </div>
-  );
-}
-
 export default function App() {
   const [jobId, setJobId] = useState(null);
   const [seriesuid, setSeriesuid] = useState(null);
@@ -229,11 +158,9 @@ export default function App() {
   const [report, setReport] = useState(null);
   const [activeView, setActiveView] = useState("axial");
   const [sliceIdx, setSliceIdx] = useState(0);
-  const [showAnnotations, setShowAnnotations] = useState(true);
-  const [showOverlay, setShowOverlay] = useState(false);
-  const [overlayOpacity, setOverlayOpacity] = useState(0.30);
   const [selectedNodule, setSelectedNodule] = useState(null);
   const [minDiameterMm, setMinDiameterMm] = useState(0);
+  const [minConfidence, setMinConfidence] = useState(0);
   const [sliceCatalog, setSliceCatalog] = useState({});
   const [history, setHistory] = useState([]);
   const [deletingScanId, setDeletingScanId] = useState(null);
@@ -254,10 +181,8 @@ export default function App() {
     setSelectedNodule(null);
     setSliceCatalog({});
     setSliceIdx(0);
-    setShowAnnotations(true);
-    setShowOverlay(false);
-    setOverlayOpacity(0.30);
     setMinDiameterMm(0);
+    setMinConfidence(0);
     setActiveSidebarPanel("upload");
   }, []);
 
@@ -408,9 +333,6 @@ export default function App() {
     setReport(scan.report ?? null);
     setSelectedNodule(null);
     setSliceIdx(0);
-    setShowAnnotations(true);
-    setShowOverlay(false);
-    setOverlayOpacity(0.30);
     setActiveSidebarPanel(scan.report?.candidates?.length ? "findings" : "scan");
     const catalog = await loadSliceCatalog(scan.seriesuid);
     const initialIndices = catalog.axial?.indices ?? [];
@@ -451,10 +373,6 @@ export default function App() {
     : null;
 
   const activeSliceMeta = sliceCatalog[activeView] ?? { indices: [], count: 0 };
-  const maxSliceIdx = activeSliceMeta.indices.length > 0
-    ? activeSliceMeta.indices[activeSliceMeta.indices.length - 1]
-    : null;
-
   // Jump to nodule slice only when the selected nodule or view changes — not on every scroll.
   useEffect(() => {
     if (selectedNodule?.slice_indices?.[activeView] != null) {
@@ -471,19 +389,17 @@ export default function App() {
     }
   }, [activeView, activeSliceMeta.indices]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const baseLayer = showAnnotations ? "base" : "raw";
   const baseSliceUrl = seriesuid && status === "SUCCESS"
-    ? `${API}/slices/${seriesuid}/${activeView}?idx=${sliceIdx}&layer=${baseLayer}`
-    : null;
-  const overlaySliceUrl = seriesuid && status === "SUCCESS"
-    ? `${API}/slices/${seriesuid}/${activeView}?idx=${sliceIdx}&layer=overlay`
+    ? `${API}/slices/${seriesuid}/${activeView}?idx=${sliceIdx}`
     : null;
 
   const candidates = report?.candidates ?? [];
   const maxDiameterMm = candidates.length > 0
     ? Math.ceil(Math.max(...candidates.map((c) => c.diameter_mm ?? 0)))
     : 30;
-  const filteredCandidates = candidates.filter((c) => (c.diameter_mm ?? 0) >= minDiameterMm);
+  const filteredCandidates = candidates.filter((c) => (
+    (c.diameter_mm ?? 0) >= minDiameterMm && candidateProb(c) >= minConfidence
+  ));
 
   const historyDone = history.filter((s) => s.status === "done");
   const sidebarItems = [
@@ -607,17 +523,6 @@ export default function App() {
                 <SectionLabel>Findings</SectionLabel>
                 {status === "SUCCESS" ? (
                   <>
-                    <OverlayControls
-                      showOverlay={showOverlay}
-                      annotationsEnabled={showAnnotations}
-                      onToggleOverlay={() => setShowOverlay((prev) => !prev)}
-                      overlayOpacity={overlayOpacity}
-                      onOpacityChange={setOverlayOpacity}
-                    />
-                    <AnnotationControls
-                      showAnnotations={showAnnotations}
-                      onToggleAnnotations={() => setShowAnnotations((prev) => !prev)}
-                    />
                     <div style={{ marginBottom: 16 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 7 }}>
                         <label style={{ fontSize: 11, color: "var(--text-2)" }}>Min diameter</label>
@@ -632,6 +537,23 @@ export default function App() {
                         step={0.5}
                         value={minDiameterMm}
                         onChange={(e) => setMinDiameterMm(Number(e.target.value))}
+                        style={{ width: "100%", cursor: "pointer" }}
+                      />
+                    </div>
+                    <div style={{ marginBottom: 16 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 7 }}>
+                        <label style={{ fontSize: 11, color: "var(--text-2)" }}>Min confidence</label>
+                        <span style={{ fontSize: 11, color: "var(--teal)", fontFamily: "var(--mono)" }}>
+                          {minConfidence > 0 ? `>= ${(minConfidence * 100).toFixed(0)}%` : "All"}
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        value={minConfidence}
+                        onChange={(e) => setMinConfidence(Number(e.target.value))}
                         style={{ width: "100%", cursor: "pointer" }}
                       />
                     </div>
@@ -755,16 +677,8 @@ export default function App() {
           <ViewTabs active={activeView} onChange={setActiveView} />
           <Viewer
             baseSliceUrl={baseSliceUrl}
-            overlaySliceUrl={overlaySliceUrl}
             sliceIdx={sliceIdx}
-            onSliceChange={(updater) => {
-              setSelectedNodule(null);
-              setSliceIdx(updater);
-            }}
             view={activeView}
-            maxSliceIdx={maxSliceIdx}
-            showOverlay={showAnnotations && showOverlay}
-            overlayOpacity={overlayOpacity}
           />
         </main>
       </div>

@@ -285,28 +285,19 @@ async def status(job_id: str):
 
 
 @app.get("/slices/{uid}/{view}")
-async def get_slices(uid: str, view: str, idx: int = 0, layer: str = "composite"):
+async def get_slices(uid: str, view: str, idx: int = 0):
     """Return a rendered PNG slice.
 
     Args:
         uid: seriesuid
         view: axial | coronal | sagittal
         idx: slice index
-        layer: composite | raw | base | overlay
-
     Returns:
         PNG image response
     """
     if view not in ("axial", "coronal", "sagittal"):
         raise HTTPException(400, "view must be axial|coronal|sagittal")
-    if layer not in ("composite", "raw", "base", "overlay"):
-        raise HTTPException(400, "layer must be composite|raw|base|overlay")
-
-    filename = (
-        f"{view}_{idx:04d}.png"
-        if layer == "composite"
-        else f"{layer}_{view}_{idx:04d}.png"
-    )
+    filename = f"{view}_{idx:04d}.png"
     img_path = Path(OUTPUT_DIR) / uid / "slices" / filename
     if not img_path.exists():
         raise HTTPException(404, f"Slice not found: {img_path}")
@@ -324,12 +315,8 @@ async def list_slices(uid: str, view: str):
     if not slice_dir.exists():
         raise HTTPException(404, "Slices not yet generated")
 
-    files = sorted(slice_dir.glob(f"base_{view}_*.png"))
-    if not files:
-        files = sorted(slice_dir.glob(f"{view}_*.png"))
-        indices = [int(f.stem.split("_")[1]) for f in files]
-    else:
-        indices = [int(f.stem.split("_")[2]) for f in files]
+    files = sorted(slice_dir.glob(f"{view}_*.png"))
+    indices = [int(f.stem.split("_")[1]) for f in files]
     return {"view": view, "indices": indices, "count": len(indices)}
 
 

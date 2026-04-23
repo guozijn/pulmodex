@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen, waitFor, act } from "@testing-library/react";
+import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, afterEach } from "vitest";
 import App from "../App";
@@ -78,7 +78,7 @@ describe("App", () => {
   });
 
   it(
-    "transitions to SUCCESS and shows overlay controls when polling resolves",
+    "transitions to SUCCESS and shows findings when polling resolves",
     async () => {
       // NOTE: vi.useFakeTimers() deadlocks in React 18 + jsdom because
       // advanceTimersByTimeAsync cannot resolve chained async Promises while
@@ -106,16 +106,12 @@ describe("App", () => {
         () => expect(screen.getByText("Complete")).toBeInTheDocument(),
         { timeout: 4000 },
       );
-      expect(screen.getByText("Heatmap overlay")).toBeInTheDocument();
-      const toggle = getLabeledToggle("Heatmap overlay", "OFF");
-      expect(toggle).toBeInTheDocument();
-      await userEvent.click(toggle);
-      expect(getLabeledToggle("Heatmap overlay", "ON")).toBeInTheDocument();
+      expect(screen.getByText("Min diameter")).toBeInTheDocument();
     },
     6000,
   );
 
-  it("switches to raw CT when annotations are hidden", async () => {
+  it("requests boxed CT slices after a successful scan", async () => {
     vi.stubGlobal("fetch", vi.fn().mockImplementation((url) => {
       if (url.includes("/predict")) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve({ job_id: "job-raw", seriesuid: "series-raw" }) });
@@ -135,14 +131,56 @@ describe("App", () => {
 
     await waitFor(() => expect(screen.getByText("Complete")).toBeInTheDocument(), { timeout: 4000 });
     const img = await screen.findByRole("img", { name: "slice 0" });
-    expect(img).toHaveAttribute("src", "/api/slices/series-raw/axial?idx=0&layer=base");
+    expect(img).toHaveAttribute("src", "/api/slices/series-raw/axial?idx=0");
+  });
 
-    const annotationsToggle = getLabeledToggle("Annotations", "ON");
-    await userEvent.click(annotationsToggle);
+  it("filters nodules by minimum confidence score", async () => {
+    const report = {
+      candidates: [
+        {
+          coordX: 10,
+          coordY: 20,
+          coordZ: 30,
+          prob: 0.2,
+          diameter_mm: 5.0,
+          slice_indices: { axial: 0, coronal: 0, sagittal: 0 },
+        },
+        {
+          coordX: 40,
+          coordY: 50,
+          coordZ: 60,
+          prob: 0.85,
+          diameter_mm: 7.0,
+          slice_indices: { axial: 1, coronal: 1, sagittal: 1 },
+        },
+      ],
+    };
 
-    await waitFor(() => {
-      expect(screen.getByRole("img", { name: "slice 0" })).toHaveAttribute("src", "/api/slices/series-raw/axial?idx=0&layer=raw");
-    });
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url) => {
+      if (url.includes("/predict")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ job_id: "job-filter", seriesuid: "series-filter" }) });
+      }
+      if (url.includes("/status")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ state: "SUCCESS", result: {} }) });
+      }
+      if (url.includes("/slices/")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ view: "axial", indices: [0, 1], count: 2 }) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(report) });
+    }));
+
+    render(<App />);
+    const input = document.querySelector("input[type='file']");
+    await userEvent.upload(input, new File(["d"], "scan.zip", { type: "application/zip" }));
+
+    await waitFor(() => expect(screen.getByText("Min confidence")).toBeInTheDocument(), { timeout: 4000 });
+    expect(screen.getAllByTestId("nodule-item")).toHaveLength(2);
+
+    const sliders = screen.getAllByRole("slider");
+    fireEvent.change(sliders[1], { target: { value: "0.5" } });
+
+    await waitFor(() => expect(screen.getAllByTestId("nodule-item")).toHaveLength(1));
+    expect(screen.getByText("85%")).toBeInTheDocument();
   });
 
   it("shows backend failure details when polling returns FAILURE", async () => {

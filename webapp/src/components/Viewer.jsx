@@ -29,47 +29,27 @@ function LungPlaceholder() {
 
 export default function Viewer({
   baseSliceUrl,
-  overlaySliceUrl,
   sliceIdx,
-  onSliceChange,
   view = "axial",
-  maxSliceIdx = null,
-  showOverlay = false,
-  overlayOpacity = 0.30,
 }) {
   const [baseImgSrc, setBaseImgSrc] = useState(null);
-  const [overlayImgSrc, setOverlayImgSrc] = useState(null);
   const [error, setError] = useState(false);
   const containerRef = useRef(null);
 
   useEffect(() => {
     if (!baseSliceUrl) {
       setBaseImgSrc(null);
-      setOverlayImgSrc(null);
       return;
     }
     setError(false);
     setBaseImgSrc(baseSliceUrl);
-    setOverlayImgSrc(overlaySliceUrl);
-  }, [baseSliceUrl, overlaySliceUrl, sliceIdx]);
-
-  const handleWheel = (e) => {
-    e.preventDefault();
-    onSliceChange((prev) => {
-      const next = Math.max(0, prev + (e.deltaY > 0 ? 1 : -1));
-      if (typeof maxSliceIdx === "number") {
-        return Math.min(maxSliceIdx, next);
-      }
-      return next;
-    });
-  };
+  }, [baseSliceUrl, sliceIdx]);
 
   const orient = ORIENTATION[view] ?? ORIENTATION.axial;
 
   return (
     <div
       ref={containerRef}
-      onWheel={handleWheel}
       style={{
         flex: 1,
         position: "relative",
@@ -93,20 +73,6 @@ export default function Viewer({
               onError={() => setError(true)}
               style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
             />
-            {showOverlay && overlayImgSrc ? (
-              <img
-                src={overlayImgSrc}
-                alt=""
-                aria-hidden="true"
-                style={{
-                  position: "absolute",
-                  maxWidth: "100%",
-                  maxHeight: "100%",
-                  objectFit: "contain",
-                  opacity: overlayOpacity,
-                }}
-              />
-            ) : null}
           </div>
 
           <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
@@ -158,7 +124,7 @@ export default function Viewer({
             }}>
               <div>PULMODEX v1.0</div>
               <div>WIN -1000/400 HU</div>
-              <div>{showOverlay ? `OVERLAY ${Math.round(overlayOpacity * 100)}%` : "OVERLAY OFF"}</div>
+              <div>BOXED FINDINGS</div>
             </div>
 
             {/* Slice index — bottom left */}
@@ -170,7 +136,7 @@ export default function Viewer({
               color: "rgba(255,255,255,0.3)",
               letterSpacing: "0.05em",
             }}>
-              Slice {sliceIdx} · scroll to navigate
+              Slice {sliceIdx}
             </div>
           </div>
         </>
