@@ -96,3 +96,42 @@ def test_resolve_model_backend_rejects_unknown_value() -> None:
         assert "MODEL_BACKEND" in str(exc)
     else:
         raise AssertionError("Expected ValueError for invalid MODEL_BACKEND")
+
+
+def test_predict_task_persists_original_scan_before_render(monkeypatch, tmp_path) -> None:
+    staged_scan = tmp_path / "upload" / "scan.nii.gz"
+    staged_scan.parent.mkdir(parents=True)
+    staged_scan.write_bytes(b"original-nifti")
+    output_dir = tmp_path / "outputs"
+
+    class FakePipeline:
+        fp_threshold = 0.5
+
+        def run(self, scan_path: str, output_dir_arg: str, seriesuid: str) -> dict:
+            assert scan_path == str(staged_scan)
+            assert output_dir_arg == str(output_dir)
+            assert seriesuid == "scan-123"
+            return {"seriesuid": seriesuid, "candidates": []}
+
+    monkeypatch.setattr(tasks, "_pipeline", FakePipeline())
+    monkeypatch.setattr(tasks, "_load_webapp_config", lambda: {"webapp": {}})
+
+    render_calls = {}
+
+    def fake_render_slices(scan_output_dir: str, **kwargs) -> list[str]:
+        render_calls["scan_output_dir"] = scan_output_dir
+        render_calls["kwargs"] = kwargs
+        return []
+
+    import src.webapp.renderer as renderer_mod
+
+    monkeypatch.setattr(renderer_mod, "render_slices", fake_render_slices)
+
+    updates = []
+    monkeypatch.setattr(tasks.predict_task, "update_state", lambda state, meta: updates.append((state, meta)))
+    result = tasks.predict_task.__wrapped__(str(staged_scan), str(output_dir), "scan-123")
+
+    persisted = output_dir / "scan-123" / "original_scan.nii.gz"
+    assert persisted.read_bytes() == b"original-nifti"
+    assert render_calls["scan_output_dir"] == str(output_dir / "scan-123")
+    assert result == {"status": "done", "report": {"seriesuid": "scan-123", "candidates": []}}

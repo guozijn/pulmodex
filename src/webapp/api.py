@@ -20,7 +20,7 @@ import numpy as np
 import pydicom
 import SimpleITK as sitk
 from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydicom.errors import InvalidDicomError
 
 from src.webapp.tasks import celery_app, predict_task
@@ -35,6 +35,84 @@ _ALLOWED_UPLOADS = {
     ".zip": _ZIP_UPLOAD_KIND,
     ".nii.gz": _NIFTI_UPLOAD_KIND,
 }
+
+
+def _download_stem(filename: str | None, fallback: str) -> str:
+    if not filename:
+        return fallback
+
+    safe_name = Path(filename).name
+    lowered_name = safe_name.lower()
+    for extension in _ALLOWED_UPLOADS:
+        if lowered_name.endswith(extension):
+            return safe_name[: -len(extension)] or fallback
+
+    return Path(safe_name).stem or fallback
+
+
+def _candidate_box_cccwhd(candidate: dict) -> tuple[float, float, float, float, float, float]:
+    bbox_mm = candidate.get("bbox_mm")
+    if isinstance(bbox_mm, list) and len(bbox_mm) == 3:
+        width_mm = float(bbox_mm[0])
+        height_mm = float(bbox_mm[1])
+        depth_mm = float(bbox_mm[2])
+    else:
+        diameter_mm = float(candidate.get("diameter_mm", 0.0))
+        width_mm = diameter_mm
+        height_mm = diameter_mm
+        depth_mm = diameter_mm
+
+    return (
+        float(candidate["coordX"]),
+        float(candidate["coordY"]),
+        float(candidate["coordZ"]),
+        width_mm,
+        height_mm,
+        depth_mm,
+    )
+
+
+def _boxes_to_obj(boxes: list[tuple[float, float, float, float, float, float]]) -> str:
+    """Convert center-size boxes (cccwhd, RAS world) to Wavefront OBJ mesh text."""
+    vertices: list[tuple[float, float, float]] = []
+    faces: list[tuple[int, int, int, int]] = []
+
+    for box_index, (cx, cy, cz, width, height, depth) in enumerate(boxes):
+        xmin = cx - width / 2.0
+        xmax = cx + width / 2.0
+        ymin = cy - height / 2.0
+        ymax = cy + height / 2.0
+        zmin = cz - depth / 2.0
+        zmax = cz + depth / 2.0
+
+        vertices.extend([
+            (xmax, ymax, zmin),
+            (xmax, ymin, zmin),
+            (xmin, ymin, zmin),
+            (xmin, ymax, zmin),
+            (xmax, ymax, zmax),
+            (xmax, ymin, zmax),
+            (xmin, ymin, zmax),
+            (xmin, ymax, zmax),
+        ])
+
+        base = box_index * 8 + 1
+        faces.extend([
+            (base + 0, base + 1, base + 2, base + 3),
+            (base + 4, base + 7, base + 6, base + 5),
+            (base + 0, base + 4, base + 5, base + 1),
+            (base + 1, base + 5, base + 6, base + 2),
+            (base + 2, base + 6, base + 7, base + 3),
+            (base + 4, base + 0, base + 3, base + 7),
+        ])
+
+    lines = [
+        "# Pulmodex nodule boxes",
+        "# Coordinate system: RAS world coordinates",
+    ]
+    lines.extend(f"v {x:.6f} {y:.6f} {z:.6f}" for x, y, z in vertices)
+    lines.extend(f"f {a} {b} {c} {d}" for a, b, c, d in faces)
+    return "\n".join(lines) + "\n"
 
 
 def _validate_upload_name(filename: str | None) -> tuple[str, str]:
@@ -368,3 +446,41 @@ async def get_report(uid: str):
     if not report_path.exists():
         raise HTTPException(404, "Report not found")
     return JSONResponse(json.loads(report_path.read_text()))
+
+
+@app.get("/volume/{uid}")
+async def get_volume(uid: str):
+    """Return the persisted original scan volume for browser-side 3D viewing."""
+    volume_path = Path(OUTPUT_DIR) / uid / "original_scan.nii.gz"
+    if not volume_path.exists():
+        raise HTTPException(404, "Volume not found")
+    return FileResponse(str(volume_path), media_type="application/gzip")
+
+
+@app.get("/markups/{uid}")
+async def get_slicer_markups(uid: str):
+    """Return Slicer-loadable OBJ boxes for detected nodules."""
+    report_path = Path(OUTPUT_DIR) / uid / "report.json"
+    if not report_path.exists():
+        raise HTTPException(404, "Report not found")
+
+    report = json.loads(report_path.read_text())
+    candidates = report.get("candidates", [])
+    coordinate_system = report.get("coordinate_system", "RAS")
+    meta_path = Path(OUTPUT_DIR) / uid / "meta.json"
+    meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+    download_stem = _download_stem(meta.get("filename"), uid)
+
+    if coordinate_system != "RAS":
+        raise HTTPException(400, f"Unsupported coordinate system for tutorial export: {coordinate_system}")
+
+    boxes = [_candidate_box_cccwhd(candidate) for candidate in candidates]
+    obj_text = _boxes_to_obj(boxes)
+
+    return Response(
+        obj_text,
+        media_type="model/obj",
+        headers={
+            "Content-Disposition": f'attachment; filename="{download_stem}_nodules.obj"',
+        },
+    )

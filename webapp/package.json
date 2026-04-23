@@ -12,10 +12,10 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
-    "react": "^18.3.0",
-    "react-dom": "^18.3.0",
     "cornerstone-core": "^2.6.1",
-    "cornerstone-web-image-loader": "^2.1.1"
+    "cornerstone-web-image-loader": "^2.1.1",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.44.0",

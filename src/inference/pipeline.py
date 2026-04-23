@@ -122,15 +122,19 @@ def _extract_candidates(
         if region.area < min_voxels:
             continue
         cz, cy, cx = region.centroid
-        # World coordinates (LPS)
-        world_zyx = origin + np.array([cz, cy, cx]) * spacing
+        # SimpleITK physical coordinates are LPS; convert to RAS for downstream
+        # viewer/export consistency with Slicer markups.
+        world_zyx_lps = origin + np.array([cz, cy, cx]) * spacing
+        coord_x_ras = -float(world_zyx_lps[2])
+        coord_y_ras = -float(world_zyx_lps[1])
+        coord_z_ras = float(world_zyx_lps[0])
         diameter_mm = float((region.area * np.prod(spacing)) ** (1 / 3) * 2)
 
         candidates.append(
             {
-                "coordX": float(world_zyx[2]),
-                "coordY": float(world_zyx[1]),
-                "coordZ": float(world_zyx[0]),
+                "coordX": coord_x_ras,
+                "coordY": coord_y_ras,
+                "coordZ": coord_z_ras,
                 "prob": float(region.mean_intensity),
                 "diameter_mm": diameter_mm,
                 "centre_zyx": np.array([cz, cy, cx]),
@@ -258,6 +262,7 @@ class InferencePipeline:
 
         report = {
             "seriesuid": seriesuid,
+            "coordinate_system": "RAS",
             "n_candidates_stage1": len(candidates),
             "n_candidates_final": len(final_candidates),
             "candidates": [_candidate_payload(c) for c in final_candidates],

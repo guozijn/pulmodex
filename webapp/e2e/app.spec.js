@@ -178,7 +178,7 @@ test.describe("Viewer interaction", () => {
     await expect(coronalBtn).toBeVisible();
   });
 
-  test("overlay controls are visible after SUCCESS", async ({ page }) => {
+  test("findings controls are visible after SUCCESS", async ({ page }) => {
     await mockApi(page, "SUCCESS");
     await page.goto("/");
 
@@ -190,17 +190,10 @@ test.describe("Viewer interaction", () => {
     });
 
     await expect(page.getByText("Complete")).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText("Heatmap overlay")).toBeVisible();
-    const toggle = labeledButton(page, "Heatmap overlay", "OFF");
-    await expect(toggle).toBeVisible();
-    const slider = page.locator("input[type='range']").first();
-    await expect(slider).toBeVisible();
-    await expect(slider).toBeDisabled();
-    await toggle.click();
-    await expect(labeledButton(page, "Heatmap overlay", "ON")).toBeVisible();
-    await expect(slider).toBeEnabled();
-    await slider.fill("0.8");
-    await expect(page.getByText("OVERLAY 80%")).toBeVisible();
+    await expect(page.getByText("Min diameter")).toBeVisible();
+    await expect(page.getByText("Min confidence")).toBeVisible();
+    await expect(page.locator("input[type='range']")).toHaveCount(2);
+    await expect(page.getByRole("link", { name: "Download Slicer coordinates" })).toBeVisible();
   });
 });
 

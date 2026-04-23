@@ -30,6 +30,32 @@ function LungIcon({ size = 18 }) {
   );
 }
 
+function DownloadIcon({ size = 14 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path
+        d="M10 3.5v7.5"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+      />
+      <path
+        d="M6.8 8.8 10 12l3.2-3.2"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M4 14.5h12"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
 function SectionLabel({ children }) {
   return (
     <div style={{
@@ -108,7 +134,7 @@ function ViewTabs({ active, onChange }) {
       borderBottom: "1px solid var(--border)",
       flexShrink: 0,
     }}>
-      {["axial", "coronal", "sagittal"].map((v) => (
+      {VIEW_NAMES.map((v) => (
         <button
           key={v}
           onClick={() => onChange(v)}
@@ -392,6 +418,9 @@ export default function App() {
   const baseSliceUrl = seriesuid && status === "SUCCESS"
     ? `${API}/slices/${seriesuid}/${activeView}?idx=${sliceIdx}`
     : null;
+  const slicerMarkupUrl = seriesuid && status === "SUCCESS"
+    ? `${API}/markups/${seriesuid}`
+    : null;
 
   const candidates = report?.candidates ?? [];
   const maxDiameterMm = candidates.length > 0
@@ -467,6 +496,32 @@ export default function App() {
           <div style={{ paddingTop: 16 }}>
             <SidebarMenu active={activeSidebarPanel} items={sidebarItems} onChange={setActiveSidebarPanel} />
           </div>
+
+          {status === "SUCCESS" && filteredCandidates.length > 0 && slicerMarkupUrl && (
+            <div style={{ padding: "0 16px 12px", display: "flex", justifyContent: "flex-end" }}>
+              <a
+                href={slicerMarkupUrl}
+                download
+                title="Download Slicer coordinates"
+                aria-label="Download Slicer coordinates"
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: 32,
+                  height: 32,
+                  background: "var(--bg-2)",
+                  color: "var(--text)",
+                  border: "1px solid var(--border)",
+                  borderRadius: "var(--radius)",
+                  textDecoration: "none",
+                  boxSizing: "border-box",
+                }}
+              >
+                <DownloadIcon />
+              </a>
+            </div>
+          )}
 
           <div style={{ flex: 1, overflowY: "auto", padding: "0 16px 20px" }}>
             {activeSidebarPanel === "upload" && (

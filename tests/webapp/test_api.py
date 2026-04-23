@@ -189,3 +189,68 @@ def test_delete_scan_404_for_missing_scan(monkeypatch, tmp_path):
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Scan not found"
+
+
+def test_get_volume_returns_persisted_original_scan(monkeypatch, tmp_path):
+    output_dir = tmp_path / "outputs"
+    monkeypatch.setattr(api, "OUTPUT_DIR", str(output_dir))
+
+    seriesuid = "scan-123"
+    volume_path = output_dir / seriesuid / "original_scan.nii.gz"
+    volume_path.parent.mkdir(parents=True)
+    volume_path.write_bytes(b"nifti-data")
+
+    client = TestClient(api.app)
+    response = client.get(f"/volume/{seriesuid}")
+
+    assert response.status_code == 200
+    assert response.content == b"nifti-data"
+
+
+def test_get_volume_404_when_missing(monkeypatch, tmp_path):
+    monkeypatch.setattr(api, "OUTPUT_DIR", str(tmp_path / "outputs"))
+
+    client = TestClient(api.app)
+    response = client.get("/volume/missing-scan")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Volume not found"
+
+
+def test_get_slicer_markups_returns_obj(monkeypatch, tmp_path):
+    output_dir = tmp_path / "outputs"
+    monkeypatch.setattr(api, "OUTPUT_DIR", str(output_dir))
+
+    seriesuid = "scan-123"
+    report_path = output_dir / seriesuid / "report.json"
+    report_path.parent.mkdir(parents=True)
+    (output_dir / seriesuid / "meta.json").write_text(json.dumps({
+        "seriesuid": seriesuid,
+        "filename": "patient_scan.nii.gz",
+    }))
+    report_path.write_text(json.dumps({
+        "seriesuid": seriesuid,
+        "coordinate_system": "RAS",
+        "candidates": [
+            {"coordX": 1.0, "coordY": 2.0, "coordZ": 3.0, "prob": 0.8, "diameter_mm": 6.5},
+        ],
+    }))
+
+    client = TestClient(api.app)
+    response = client.get(f"/markups/{seriesuid}")
+
+    assert response.status_code == 200
+    assert response.text.startswith("# Pulmodex nodule boxes")
+    assert "v 4.250000 5.250000 -0.250000" in response.text
+    assert "f 1 2 3 4" in response.text
+    assert response.headers["content-disposition"] == 'attachment; filename="patient_scan_nodules.obj"'
+
+
+def test_get_slicer_markups_404_when_report_missing(monkeypatch, tmp_path):
+    monkeypatch.setattr(api, "OUTPUT_DIR", str(tmp_path / "outputs"))
+
+    client = TestClient(api.app)
+    response = client.get("/markups/missing-scan")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Report not found"

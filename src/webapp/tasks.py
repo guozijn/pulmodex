@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -163,6 +164,13 @@ def predict_task(self, scan_path: str, output_dir: str, seriesuid: str) -> dict:
         _pipeline = _get_pipeline()
 
     try:
+        out_dir = Path(output_dir) / seriesuid
+        out_dir.mkdir(parents=True, exist_ok=True)
+        staged_scan_path = Path(scan_path)
+        persisted_scan_path = out_dir / "original_scan.nii.gz"
+        if staged_scan_path.resolve() != persisted_scan_path.resolve():
+            shutil.copy2(staged_scan_path, persisted_scan_path)
+
         self.update_state(state="PROGRESS", meta={"step": "detection"})
         report = _pipeline.run(scan_path, output_dir, seriesuid)
 
@@ -171,7 +179,7 @@ def predict_task(self, scan_path: str, output_dir: str, seriesuid: str) -> dict:
         from src.webapp.renderer import render_slices
         webapp_cfg = _load_webapp_config().get("webapp", {})
         render_slices(
-            scan_output_dir=str(Path(output_dir) / seriesuid),
+            scan_output_dir=str(out_dir),
             fp_threshold=_pipeline.fp_threshold,
             confident_color=tuple(webapp_cfg.get("confident_color", [0, 255, 0])),
             uncertain_color=tuple(webapp_cfg.get("uncertain_color", [0, 180, 0])),

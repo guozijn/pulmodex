@@ -13,10 +13,6 @@ function getHistoryOpenButton(name) {
   return screen.getAllByRole("button").find((button) => button.textContent?.includes(name) && !button.getAttribute("aria-label"));
 }
 
-function getLabeledToggle(label, name) {
-  return screen.getAllByRole("button", { name }).find((button) => button.parentElement?.textContent?.includes(label));
-}
-
 describe("App", () => {
   it("renders the application header", () => {
     render(<App />);
@@ -28,6 +24,7 @@ describe("App", () => {
     expect(screen.getByText("axial")).toBeInTheDocument();
     expect(screen.getByText("coronal")).toBeInTheDocument();
     expect(screen.getByText("sagittal")).toBeInTheDocument();
+    expect(screen.queryByText("3d")).not.toBeInTheDocument();
   });
 
   it("shows upload prompt in the initial state", () => {
@@ -181,6 +178,43 @@ describe("App", () => {
 
     await waitFor(() => expect(screen.getAllByTestId("nodule-item")).toHaveLength(1));
     expect(screen.getByText("85%")).toBeInTheDocument();
+  });
+
+  it("shows a slicer markups download link for detected nodules", async () => {
+    const report = {
+      candidates: [
+        {
+          coordX: 10,
+          coordY: 20,
+          coordZ: 30,
+          prob: 0.85,
+          diameter_mm: 7.0,
+          slice_indices: { axial: 1, coronal: 1, sagittal: 1 },
+        },
+      ],
+    };
+
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url) => {
+      if (url.includes("/predict")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ job_id: "job-markup", seriesuid: "series-markup" }) });
+      }
+      if (url.includes("/status")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ state: "SUCCESS", result: {} }) });
+      }
+      if (url.includes("/slices/")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ view: "axial", indices: [1], count: 1 }) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(report) });
+    }));
+
+    render(<App />);
+    const input = document.querySelector("input[type='file']");
+    await userEvent.upload(input, new File(["d"], "scan.zip", { type: "application/zip" }));
+
+    await waitFor(() => expect(screen.getByText("Complete")).toBeInTheDocument(), { timeout: 4000 });
+    const link = await screen.findByRole("link", { name: "Download Slicer coordinates" });
+    expect(link).toHaveAttribute("href", "/api/markups/series-markup");
+    expect(link).toHaveAttribute("title", "Download Slicer coordinates");
   });
 
   it("shows backend failure details when polling returns FAILURE", async () => {

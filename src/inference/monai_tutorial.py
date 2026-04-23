@@ -183,6 +183,7 @@ class MONAITutorialDetectionPipeline:
 
         report = {
             "seriesuid": seriesuid,
+            "coordinate_system": "RAS",
             "n_candidates_stage1": len(detected_candidates),
             "n_candidates_final": len(final_candidates),
             "candidates": [_candidate_payload(c) for c in final_candidates],
