@@ -1,30 +1,40 @@
 # Pulmodex
 
-AI-powered lung nodule detection from CT scans using deep neural networks.
+AI-powered lung nodule detection from CT scans.
 
-**Input:** DICOM CT scans
-**Output:** Detection overlays · confidence maps · saliency maps · annotated slice PNGs · JSON report
+Pulmodex currently focuses on a MONAI-backed inference web app: upload a zipped
+DICOM CT series or a `.nii.gz` volume, run asynchronous detection, and review
+rendered CT slices, nodule candidates, confidence maps, and downloadable
+artefacts.
+
+**Input:** zipped DICOM CT series or `.nii.gz` CT volume  
+**Output:** rendered slice PNGs · candidate boxes · confidence maps · saliency maps · JSON report
 
 ---
 
-## Models
+## Current Inference Stack
+
+The web worker supports three primary detector sources through `MODEL_CHECKPOINT`
+and `MODEL_BACKEND`:
+
+| Backend | Model source | Notes |
+|---------|--------------|-------|
+| `monai_bundle` | MONAI bundle directory with `configs/inference.json` and `models/model.pt` | Preferred production path |
+| `monai_tutorial` | standalone TorchScript `.pt` from MONAI LUNA16 tutorial `luna16_training.py` | Uses tutorial RetinaNet defaults |
+| `native` | Pulmodex project checkpoint `.ckpt` | Uses local sliding-window segmentation |
+| `auto` | path-based detection | Default; infers one of the above |
+
+After the primary detector, the worker can apply the local false-positive
+reduction model from `FP_CHECKPOINT`. If that checkpoint is missing, the FP
+stage is skipped and detection still runs.
+
+Project-native model checkpoints are still supported:
 
 | Model | Architecture | Loss | Patch |
-|-------|-------------|------|-------|
-| Baseline | 3D U-Net (encoder-decoder + skip connections) | Dice + BCE | 128³ |
+|-------|--------------|------|-------|
+| Baseline | 3D U-Net encoder-decoder with skip connections | Dice + BCE | 128³ |
 | Hybrid | Res-U-Net + Swin Transformer bottleneck + deep supervision | Dice-Focal | 128³ |
-
-Both expose `forward(x) -> {"seg": mask, "logits": raw}`.
-
-**Project-native inference** is two-stage: sliding-window segmentation → false-positive reduction (3D CNN on 32³ patches, OHEM training).
-
-**MONAI RetinaNet inference** supports two MONAI-style detector sources as the primary detector, followed by the same optional local FP reduction stage:
-- a MONAI bundle directory
-- a standalone TorchScript `.pt` file produced by the MONAI LUNA16 tutorial `luna16_training.py`
-
-**Datasets:** LUNA16 (10-fold CV, primary) · LIDC-IDRI (≥3/4 radiologist consensus, secondary)
-
-> **Note:** `LUNA16Dataset` and `LIDCDataset` classes are referenced in `src/train.py` and `src/evaluate.py` but are not yet implemented. The `src/data/` package currently provides preprocessing utilities only (`load_mhd`, `normalise_hu`, `resample_to_isotropic`, `extract_patch`). Dataset implementations are required before training from scratch.
+| FP reduction | 3D CNN classifier on candidate patches | OHEM | 32³ |
 
 ---
 
@@ -32,171 +42,210 @@ Both expose `forward(x) -> {"seg": mask, "logits": raw}`.
 
 ### Prerequisites
 
-**System dependencies**
-
 | Tool | Minimum version | Notes |
-|------|----------------|-------|
+|------|-----------------|-------|
 | Python | 3.11 | `python3 --version` |
 | pip | 23+ | bundled with Python 3.11 |
 | Node.js | 18 LTS | `node --version` |
 | npm | 9+ | bundled with Node.js 18 |
-| Docker | 24+ | `docker --version` |
-| Docker Compose | v2 (plugin) | `docker compose version` |
-| CUDA GPU | — | required for training; CPU-only inference is supported |
+| Docker | 24+ | required for Redis / Compose workflow |
+| Docker Compose | v2 plugin | `docker compose version` |
+| CUDA GPU | optional | recommended for inference and required for practical training |
 
-**Docker socket access (Linux)**
-
-Your user must be in the `docker` group to run `make dev` or any `docker compose` target without `sudo`:
+On Linux, make sure your user can access Docker without `sudo`:
 
 ```bash
 sudo usermod -aG docker $USER
-exec su -l $USER   # apply in current shell, or log out and back in
+exec su -l $USER
 ```
 
-**Python environment**
-
-Recommended: create a local virtualenv instead of using a global Conda base env:
+### Install
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -e .
-```
-
-**Frontend dependencies**
-
-```bash
 npm --prefix webapp install
 ```
 
-**Environment file**
+Create the runtime environment file:
 
 ```bash
 cp .env.example .env
-# edit .env: set DEVICE, MODEL_CHECKPOINT, MODEL_BACKEND, FP_CHECKPOINT
 ```
 
-`MODEL_CHECKPOINT` accepts either a project `.ckpt` file, a MONAI bundle directory, or a standalone MONAI tutorial TorchScript `.pt` file.
-
-`MODEL_BACKEND` controls how the worker interprets `MODEL_CHECKPOINT`:
-
-- `auto`: infer from the path
-- `native`: force the project-native checkpoint loader
-- `monai_bundle`: treat `MODEL_CHECKPOINT` as a MONAI bundle directory
-- `monai_tutorial`: treat `MODEL_CHECKPOINT` as a standalone MONAI tutorial TorchScript model
-
-### Development workflow
-
-- Install the project in editable mode with `pip install -e .`
-- Use `pulmodex <command>` as the primary entry point
-- Main commands: `train`, `evaluate`, `infer`, `export-onnx`, `generate-mock-data`, `preprocess-cache`, `dicom-to-luna16`
-- Run tests with `python -m pytest`
-
-### Convert DICOM to LUNA16 format
+Set at least these values in `.env`:
 
 ```bash
-pulmodex dicom-to-luna16 \
-    --input_dir data/raw_dicom \
-    --output_dir data/processed
+DEVICE=cuda
+MODEL_BACKEND=auto
+MODEL_CHECKPOINT=checkpoints/monai_lung_nodule_ct_detection
+FP_CHECKPOINT=checkpoints/fp_reduction_best.ckpt
+FP_THRESHOLD=0.5
 ```
 
-After conversion, edit `data/processed/candidates.csv` and `annotations.csv` to add ground-truth labels.
+Use `DEVICE=cpu` for CPU-only local smoke testing. Use `DEVICE=cuda` in the
+worker when CUDA is available.
 
-### Precompute training cache
+---
 
-The training dataset can cache each scan after isotropic resampling and HU normalization so repeated candidates from the same CT do not trigger full-volume preprocessing every time. This is most useful when you rerun training repeatedly on the same dataset and want to reduce CPU preprocessing overhead.
+## Web App
+
+The app has three runtime pieces:
+
+- FastAPI API at `http://localhost:8010`
+- Celery worker for inference
+- React/Vite frontend at `http://localhost:3000`
+
+Redis is used as the Celery broker and result backend.
+
+### Local Development
+
+Start Redis in Docker and run API, worker, and frontend on the host:
 
 ```bash
-pulmodex preprocess-cache \
-    --data_dir data/processed \
-    --cache_dir data/processed/.cache/luna16_iso
+make dev
 ```
 
-Training configs already point `data.cache_dir` at this location by default.
-
-For mock data, you can precompute a separate cache and pass it explicitly:
+Equivalent separate terminals:
 
 ```bash
-pulmodex preprocess-cache \
-    --data_dir data/mock_luna16 \
-    --cache_dir data/mock_luna16/.cache/luna16_iso
+make redis-up
+make dev-api
+make dev-worker
+make dev-frontend
 ```
+
+Open:
+
+| Service | URL |
+|---------|-----|
+| Frontend | http://localhost:3000 |
+| API | http://localhost:8010 |
+
+### Docker Compose
+
+Run the full stack in containers:
 
 ```bash
-WANDB_MODE=disabled pulmodex train experiment=baseline \
-    trainer.device=cpu \
-    data_dir=data/mock_luna16 \
-    data.cache_dir=data/mock_luna16/.cache/luna16_iso \
-    data.patch_size=32 \
-    data.batch_size=1 \
-    data.num_workers=0 \
-    trainer.max_epochs=1
+make docker-up
 ```
 
-Each cached scan writes:
+Stop or inspect it with:
+
+```bash
+make docker-down
+make docker-logs
+```
+
+The Compose stack mounts:
+
+- `./checkpoints` read-only into API/worker containers
+- `./outputs` for generated reports and rendered images
+- `./uploads` for staged uploaded scans
+
+### Runtime Configuration
+
+Configuration precedence for web inference:
+
+1. `.env` and process environment variables
+2. `configs/experiment/webapp.yaml`
+3. `configs/config.yaml`
+
+Important environment variables:
+
+| Variable | Purpose |
+|----------|---------|
+| `DEVICE` | `cpu`, `cuda`, or a CUDA device such as `cuda:0` |
+| `MODEL_CHECKPOINT` | project `.ckpt`, MONAI bundle directory, or MONAI tutorial `.pt` |
+| `MODEL_BACKEND` | `auto`, `native`, `monai_bundle`, or `monai_tutorial` |
+| `FP_CHECKPOINT` | optional local false-positive classifier checkpoint |
+| `FP_THRESHOLD` | FP classifier probability threshold |
+| `CANDIDATE_THRESHOLD` | native segmentation candidate threshold |
+| `MIN_CANDIDATE_VOXELS` | native segmentation connected-component minimum size |
+| `PRIMARY_PATCH_SIZE` | native sliding-window patch size |
+| `CELERY_BROKER_URL` | Redis broker URL |
+| `CELERY_RESULT_BACKEND` | Redis result backend URL |
+| `API_WORKERS` | API process worker count in container mode |
+| `CELERY_WORKER_CONCURRENCY` | Celery worker concurrency |
+
+For MONAI bundle inference, `MODEL_CHECKPOINT` must point to a bundle directory
+that contains `configs/inference.json` and `models/model.pt`. The bundle supplies
+its own detector configuration; `FP_THRESHOLD` still controls the optional local
+FP reduction stage.
+
+For MONAI tutorial inference, `MODEL_CHECKPOINT` must point to a standalone
+TorchScript `.pt` file. The adapter uses the LUNA16 tutorial defaults for
+anchors, score threshold, NMS threshold, spacing, and sliding-window ROI size.
+
+### Uploads
+
+Supported upload formats:
+
+- `.zip`: DICOM files are unpacked, the largest CT series is selected, then the
+  API converts it to a staged `.nii.gz`
+- `.nii.gz`: validated with SimpleITK and passed directly to the worker
+
+The DICOM conversion preserves physical geometry, resolves slice spacing from
+DICOM metadata when possible, and conservatively crops obvious air/background.
+
+### API Endpoints
 
 ```text
-<seriesuid>_vol.npy
-<seriesuid>_meta.json
+POST   /predict                              upload .zip or .nii.gz -> {job_id, seriesuid}
+GET    /status/{job_id}                      poll Celery state/result/error
+GET    /scans                                list persisted scan history
+DELETE /scans/{uid}                          delete scan artefacts and upload staging data
+GET    /report/{uid}                         fetch report.json
+GET    /volume/{uid}                         download persisted original_scan.nii.gz
+GET    /markups/{uid}                        download detected boxes as OBJ
+GET    /slices/{uid}/{view}?idx=N            fetch rendered PNG slice
+GET    /slices/{uid}/{view}/index            list available slice indices
 ```
 
-Delete and rebuild the cache if preprocessing logic changes, such as resampling behavior, HU normalization, or metadata handling.
+`view` must be one of `axial`, `coronal`, or `sagittal`.
 
-### Generate mock LUNA16 data
+### Inference Artefacts
 
-For local development and smoke tests, you can generate a tiny synthetic dataset that matches the project's LUNA16 reader layout.
-
-```bash
-pulmodex generate-mock-data --clean
-```
-
-This writes `data/mock_luna16/` with:
+Each completed scan writes to `outputs/<seriesuid>/`:
 
 ```text
-subset0..subset9/
-annotations.csv
-candidates.csv
+meta.json             upload metadata
+original_scan.nii.gz  persisted staged input volume
+ct_volume.nii.gz      preprocessed CT proxy volume for rendering
+seg_mask.nii.gz       detection mask / visualisation mask
+confidence_map.nii.gz confidence map
+saliency_map.nii.gz   Grad-CAM, Swin attention, or zero fallback for MONAI paths
+candidates.csv        detected candidates and confidence values
+report.json           summary and candidate payload
+slices/               axial, coronal, and sagittal PNG slices
 ```
 
-### Train
+`/markups/{uid}` exports detected nodule boxes as an OBJ file in RAS world
+coordinates for loading into tools such as 3D Slicer.
+
+---
+
+## Command-Line Inference
+
+The same inference adapters are available from the CLI:
 
 ```bash
-pulmodex train experiment=baseline
-pulmodex train experiment=hybrid
-pulmodex train experiment=fp_reduction
+pulmodex infer \
+    --checkpoint checkpoints/monai_lung_nodule_ct_detection \
+    --fp_checkpoint checkpoints/fp_reduction_best.ckpt \
+    --input_dir data/processed \
+    --output_dir outputs \
+    --fp_threshold 0.5
 ```
 
-Checkpoints are saved to `checkpoints/`. W&B logging is enabled automatically if `wandb` is installed.
+`--checkpoint` accepts:
 
-**Mac CPU smoke test** (MPS unsupported for `conv_transpose3d`):
-```bash
-PYTORCH_ENABLE_MPS_FALLBACK=1 pulmodex train experiment=baseline \
-    trainer.max_epochs=1 data.patch_size=32 data.batch_size=1
-```
+- a MONAI bundle directory
+- a MONAI tutorial TorchScript `.pt`
+- a Pulmodex project `.ckpt`
 
-**Mock-data smoke test**:
-```bash
-source .venv/bin/activate
-pulmodex generate-mock-data --clean
-WANDB_MODE=disabled pulmodex train experiment=baseline \
-    trainer.device=cpu \
-    data_dir=data/mock_luna16 \
-    data.patch_size=32 \
-    data.batch_size=1 \
-    data.num_workers=0 \
-    trainer.max_epochs=1
-```
-
-This should complete a 1-epoch end-to-end training run without needing the full LUNA16 dataset.
-
-### Evaluate
-
-```bash
-pulmodex evaluate --checkpoint checkpoints/baseline_best.ckpt --split test
-```
-
-Outputs CPM, per-FP-rate sensitivity, and mean Dice to `outputs/eval_results.json`.
-
-### Run inference on new scans
+For native checkpoints, these extra controls affect candidate generation:
 
 ```bash
 pulmodex infer \
@@ -209,38 +258,150 @@ pulmodex infer \
     --input_dir data/processed
 ```
 
-`--checkpoint` accepts either:
+---
 
-- a project checkpoint such as `checkpoints/hybrid_best.ckpt`
-- a MONAI bundle directory such as `checkpoints/monai_lung_nodule_ct_detection_0.6.8`
-- a MONAI tutorial TorchScript weights file such as `/home/zijianguo/tutorials/detection/model.pt`
+## Data Preparation
 
-When using a MONAI bundle, the main detection path comes from the bundle and `--fp_checkpoint` is still used for the local false-positive reduction stage.
+### Convert DICOM to LUNA16 Layout
 
-`candidate_threshold`, `min_candidate_voxels`, `primary_patch_size`, and `fp_threshold` are the main inference-time controls when using project-native checkpoints. In MONAI bundle mode, bundle-specific preprocessing and detector settings come from the bundle itself, while `fp_threshold` still applies to the local FP reduction stage.
-
-If you want to retain more small nodules, start by lowering `candidate_threshold` and `min_candidate_voxels` on the validation split. Use training changes only if inference-time tuning still underperforms for the target size range.
-
-Suggested tuning order for small-nodule sensitivity:
-
-- Lower `candidate_threshold` first
-- Lower `min_candidate_voxels` second
-- Adjust `fp_threshold` after candidate recall is acceptable
-- Increase or decrease `primary_patch_size` only if context or memory limits become the bottleneck
-
-Artefacts written to `outputs/<seriesuid>/`:
-
-```
-seg_mask.nii.gz        binary detection mask / visualisation mask
-confidence_map.nii.gz  confidence map
-saliency_map.nii.gz    Grad-CAM / Swin attention; falls back to confidence map in bundle mode
-ct_volume.nii.gz       CT proxy volume for slice rendering (bundle mode)
-candidates.csv         detected nodules with coordinates and confidence
-report.json            summary
-slices/                annotated PNG slices (axial · coronal · sagittal)
+```bash
+pulmodex dicom-to-luna16 \
+    --input_dir data/raw_dicom \
+    --output_dir data/processed
 ```
 
-### Export to ONNX
+After conversion, edit:
+
+```text
+data/processed/annotations.csv
+data/processed/candidates.csv
+```
+
+Expected LUNA16-style layout:
+
+```text
+data/processed/
+  subset0..subset9/
+    <seriesuid>.mhd
+    <seriesuid>.raw
+  annotations.csv
+  candidates.csv
+```
+
+### Generate Mock Data
+
+For local smoke tests:
+
+```bash
+pulmodex generate-mock-data --clean
+```
+
+This writes a small synthetic LUNA16-style dataset to `data/mock_luna16/`.
+
+### Precompute Training Cache
+
+Training can cache isotropically resampled, HU-normalised CT volumes so repeated
+candidates from the same scan do not re-run full-volume preprocessing.
+
+```bash
+pulmodex preprocess-cache \
+    --data_dir data/processed \
+    --cache_dir data/processed/.cache/luna16_iso
+```
+
+Each cached scan writes:
+
+```text
+<seriesuid>_vol.npy
+<seriesuid>_meta.json
+```
+
+Delete and rebuild the cache after changes to resampling, HU normalisation, or
+metadata handling.
+
+---
+
+## Training
+
+Training uses Hydra configs in `configs/` and LUNA16-style folds.
+
+```bash
+pulmodex train experiment=baseline
+pulmodex train experiment=hybrid
+pulmodex train experiment=fp_reduction
+```
+
+Checkpoints are saved to `checkpoints/`. W&B logging is enabled automatically if
+`wandb` is installed; disable it with `WANDB_MODE=disabled`.
+
+Mock-data smoke test:
+
+```bash
+source .venv/bin/activate
+pulmodex generate-mock-data --clean
+WANDB_MODE=disabled pulmodex train experiment=baseline \
+    trainer.device=cuda \
+    data_dir=data/mock_luna16 \
+    data.patch_size=32 \
+    data.batch_size=1 \
+    data.num_workers=0 \
+    trainer.max_epochs=1
+```
+
+With a precomputed mock cache:
+
+```bash
+pulmodex preprocess-cache \
+    --data_dir data/mock_luna16 \
+    --cache_dir data/mock_luna16/.cache/luna16_iso
+
+WANDB_MODE=disabled pulmodex train experiment=baseline \
+    trainer.device=cuda \
+    data_dir=data/mock_luna16 \
+    data.cache_dir=data/mock_luna16/.cache/luna16_iso \
+    data.patch_size=32 \
+    data.batch_size=1 \
+    data.num_workers=0 \
+    trainer.max_epochs=1
+```
+
+Mac CPU smoke test:
+
+```bash
+PYTORCH_ENABLE_MPS_FALLBACK=1 pulmodex train experiment=baseline \
+    trainer.max_epochs=1 \
+    data.patch_size=32 \
+    data.batch_size=1
+```
+
+---
+
+## Evaluation
+
+```bash
+pulmodex evaluate \
+    --checkpoint checkpoints/baseline_best.ckpt \
+    --data_dir data/processed \
+    --split test \
+    --output outputs/eval_results.json
+```
+
+Evaluation reports CPM, sensitivity at LUNA16 false-positive rates, and mean
+Dice.
+
+**CPM** is the mean sensitivity at FP/scan values:
+
+```text
+0.125, 0.25, 0.5, 1, 2, 4, 8
+```
+
+Matching is greedy by descending confidence. A prediction is counted as a true
+positive when its centroid falls within `diameter_mm / 2` of an annotation
+centroid.
+
+---
+
+## Export to ONNX
 
 ```bash
 pulmodex export-onnx \
@@ -249,153 +410,60 @@ pulmodex export-onnx \
     --output checkpoints/model.onnx
 ```
 
-`export-onnx` currently supports project checkpoints only. It does not export MONAI bundle directories.
-
----
-
-## Web App
-
-The inference web app can run fully in Docker Compose, while local development runs the app processes on the host and keeps Redis in Docker.
-
-```bash
-make docker-up
-make docker-down
-make docker-logs
-```
-
-The production-style API container uses environment-driven worker settings. Adjust the `.env` values below as needed.
-
-Configuration precedence for the web inference stack:
-
-1. `.env` and process environment variables
-2. `configs/experiment/webapp.yaml`
-3. `configs/config.yaml`
-
-In other words, `webapp.yaml` provides web-specific defaults, and `.env` is the final override layer used by the running API and worker processes.
-
-Important `.env` groups:
-
-- Shared runtime:
-  `DEVICE`, `LOG_LEVEL`, `CUDA_VISIBLE_DEVICES`
-- Redis / async backend:
-  `REDIS_URL`, `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`
-- API / worker process settings:
-  `API_WORKERS`, `CELERY_WORKER_CONCURRENCY`, `CELERY_WORKER_LOGLEVEL`
-- Primary detection model:
-  `MODEL_CHECKPOINT`, `MODEL_BACKEND`
-  `MODEL_CHECKPOINT` can point to either a project `.ckpt` file, a MONAI bundle directory, or a MONAI tutorial TorchScript `.pt` file. Set `MODEL_BACKEND=monai_bundle` to force bundle mode, `MODEL_BACKEND=monai_tutorial` to force tutorial TorchScript mode, or `MODEL_BACKEND=native` to force the project-native loader. Leave it at `auto` to use path-based detection.
-- False-positive reduction model:
-  `FP_CHECKPOINT`, `FP_THRESHOLD`
-- Project-native candidate generation knobs:
-  `CANDIDATE_THRESHOLD`, `MIN_CANDIDATE_VOXELS`, `PRIMARY_PATCH_SIZE`
-
-If `MODEL_BACKEND=monai_bundle`, `MODEL_CHECKPOINT` must point at a MONAI bundle directory. The worker uses the bundle's own preprocessing and detection config and then applies the local FP reduction model.
-
-If `MODEL_BACKEND=monai_tutorial`, or if `MODEL_BACKEND=auto` and `MODEL_CHECKPOINT` points at a standalone `.pt` file produced by the MONAI tutorial `luna16_training.py`, the worker loads it as a TorchScript RetinaNet detector using the tutorial's LUNA16 defaults for anchors, score thresholds, and sliding-window patch size.
-
-For local development, start Redis in Docker and run the API, worker, and frontend on the host:
-
-```bash
-make redis-up
-make dev-api
-make dev-worker
-make dev-frontend
-```
-
-Or run everything needed for development in one command:
-
-```bash
-make dev
-```
-
-| Service | URL | Description |
-|---------|-----|-------------|
-| API | http://localhost:8010 | FastAPI — upload scans, poll jobs, fetch slices |
-| Frontend | http://localhost:3000 | React — drag-drop upload, CT viewer, nodule list |
-
-**API endpoints:**
-
-```
-POST /predict                              upload .zip DICOM series → {job_id, seriesuid}
-GET  /status/{job_id}                      poll Celery task state → {state, progress, result, error}
-GET  /slices/{uid}/{view}?idx=N&layer=...  fetch rendered PNG slice layer
-GET  /slices/{uid}/{view}/index            list available slice indices for a view
-GET  /scans                                list all completed scans (scan history), newest first
-DELETE /scans/{uid}                        delete a saved scan and its rendered artefacts
-GET  /report/{uid}                         fetch JSON inference report for a scan
-```
-
-Supported slice layers:
-
-- `layer=composite` renders the combined PNG
-- `layer=base` returns the windowed CT slice with nodule square boxes drawn directly on it
-- `layer=overlay` returns the transparent heatmap (warm yellow-orange overlay with per-pixel alpha from saliency intensity; final opacity controlled client-side)
-
-Upload inputs:
-
-- The frontend and API both only accept `.zip` upload for DICOM series
-- `.zip` uploads are unpacked on the API side; the largest enclosed DICOM series is converted to a temporary `.mhd` before the worker runs
-
----
-
-## Evaluation Metric
-
-**CPM** (Competition Performance Metric) — LUNA16 standard:
-mean sensitivity at FP/scan ∈ {0.125, 0.25, 0.5, 1, 2, 4, 8}.
-
-TP = prediction centroid within `diameter_mm / 2` of annotation centroid.
-Greedy matching by descending confidence. Per-scan average (never global pool).
-
-**Target:** ≤ 1 FP/scan at sensitivity ≥ 0.85.
-
----
-
-## Project Structure
-
-```
-src/
-  data/             preprocessing utilities (load_mhd, normalise_hu, resample_to_isotropic, extract_patch)
-  models/
-    baseline/       3D U-Net
-    hybrid/         Res-U-Net + Swin Transformer
-    shared/         residual blocks, SE attention, losses
-  training/         Trainer class
-  evaluation/       FROC, Dice
-  fp_reduction/     FP classifier + OHEM loss
-  interpretability/ Grad-CAM (baseline), Swin attention (hybrid)
-  inference/        sliding-window pipeline · MONAI bundle adapter · artefact writer
-  webapp/           FastAPI · Celery tasks · slice renderer
-configs/experiment/ baseline · hybrid · fp_reduction · webapp
-tests/              mirrors src/
-scripts/            dicom_to_luna16.py · export_onnx.py
-webapp/             React frontend (Vite + JSX)
-docker/             Dockerfiles (api · worker · frontend)
-```
+ONNX export currently supports Pulmodex project checkpoints only. It does not
+export MONAI bundle directories or standalone MONAI tutorial TorchScript files.
 
 ---
 
 ## Tests
 
 ```bash
-python -m pytest tests/ -v
+python -m pytest -q
 npm --prefix webapp test
+npm --prefix webapp run test:e2e
 ```
 
-Key test coverage:
-- FROC sanity checks (all-zeros → 0.0, perfect → 1.0, sensitivity non-decreasing, radius matching)
-- Model forward passes (UNet3D, HybridNet, FPClassifier)
-- Loss functions (DiceBCELoss, DiceFocalLoss with deep supervision)
-- Frontend component tests (upload flow, status banner, nodule list, viewer)
+Or run the full configured suite:
+
+```bash
+make test
+```
+
+---
+
+## Project Structure
+
+```text
+src/
+  data/             LUNA16 dataset and preprocessing utilities
+  models/
+    baseline/       3D U-Net
+    hybrid/         Res-U-Net + Swin Transformer
+    shared/         residual blocks, SE attention, losses
+  training/         Trainer class
+  evaluation/       FROC and Dice metrics
+  fp_reduction/     FP classifier and OHEM loss
+  interpretability/ Grad-CAM and Swin attention helpers
+  inference/        native pipeline, MONAI bundle adapter, MONAI tutorial adapter
+  webapp/           FastAPI API, Celery tasks, slice renderer
+configs/
+  config.yaml
+  experiment/       baseline, hybrid, fp_reduction, webapp
+scripts/            data conversion, cache, mock data, ONNX export
+webapp/             React frontend
+docker/             API, worker, and frontend Dockerfiles
+tests/              Python tests
+```
 
 ---
 
 ## Conventions
 
-- **Coordinates:** LPS system
-- **HU range:** clamp [−1000, 400] → normalise to [0, 1]
-- **Patch size:** 128³ training / 256³ inference / 32³ FP classifier
-- **Classes:** 0 background · 1 nodule · 2 lesion (multi-class)
-- DICOM loading via `pydicom` only; no notebook-style code in `src/`
+- Web/MONAI reports use RAS world coordinates for candidate boxes.
+- LUNA16 data utilities work with `.mhd` / `.raw` volumes and CSV annotations.
+- HU preprocessing clamps lung CT values and normalises intensities for model input.
+- Default native patch sizes: 128³ for training, 256³ for inference, 32³ for FP reduction.
+- DICOM upload conversion uses `pydicom` and SimpleITK.
 
 ---
 
@@ -405,23 +473,19 @@ MIT
 
 ---
 
-### References
+## References
 
-[1] Project MONAI Tutorials, Detection workflows and examples:
+[1] Project MONAI Tutorials, Detection workflows and examples:  
 https://github.com/Project-MONAI/tutorials/tree/main/detection
 
-[2] Cardoso MJ, Li W, Brown R, et al. MONAI: An open-source framework for deep learning in healthcare.
-arXiv:2211.02701, 2022.
+[2] Cardoso MJ, Li W, Brown R, et al. MONAI: An open-source framework for deep learning in healthcare.  
 https://arxiv.org/abs/2211.02701
 
-[3] Lin TY, Goyal P, Girshick R, He K, Dollar P. Focal Loss for Dense Object Detection.
-Proceedings of the IEEE International Conference on Computer Vision (ICCV), 2017.
+[3] Lin TY, Goyal P, Girshick R, He K, Dollar P. Focal Loss for Dense Object Detection.  
 https://arxiv.org/abs/1708.02002
 
-[4] Lin TY, Dollar P, Girshick R, He K, Hariharan B, Belongie S. Feature Pyramid Networks for Object Detection.
-Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition (CVPR), 2017.
+[4] Lin TY, Dollar P, Girshick R, He K, Hariharan B, Belongie S. Feature Pyramid Networks for Object Detection.  
 https://arxiv.org/abs/1612.03144
 
-[5] Setio AAA, Traverso A, de Bel T, et al. Validation, comparison, and combination of algorithms for automatic detection of pulmonary nodules in computed tomography images: The LUNA16 challenge.
-Medical Image Analysis, 42:1-13, 2017.
+[5] Setio AAA, Traverso A, de Bel T, et al. Validation, comparison, and combination of algorithms for automatic detection of pulmonary nodules in CT: the LUNA16 challenge.  
 https://doi.org/10.1016/j.media.2017.06.015
