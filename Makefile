@@ -12,19 +12,23 @@ API_PORT ?= 8010
 FRONTEND_HOST ?= 0.0.0.0
 FRONTEND_PORT ?= 3000
 
-UID := $(shell id -u)
-GID := $(shell id -g)
+HOST_UID := $(shell id -u)
+HOST_GID := $(shell id -g)
 
-.PHONY: help dirs redis-up redis-down redis-logs docker-up docker-down docker-logs dev-api dev-worker dev-frontend dev test test-py test-frontend test-e2e
+.PHONY: help dirs redis-up redis-down redis-logs docker-build docker-up docker-start docker-down docker-logs install-systemd uninstall-systemd dev-api dev-worker dev-frontend dev test test-py test-frontend test-e2e
 
 help:
 	@echo "Available targets:"
 	@echo "  make redis-up        Start Redis in Docker"
 	@echo "  make redis-down      Stop Redis container"
 	@echo "  make redis-logs      Tail Redis logs"
+	@echo "  make docker-build    Build Docker images"
 	@echo "  make docker-up       Start full app with Docker Compose"
+	@echo "  make docker-start    Start full app in detached Docker Compose mode"
 	@echo "  make docker-down     Stop full app stack"
 	@echo "  make docker-logs     Tail Docker Compose logs"
+	@echo "  make install-systemd Install and enable boot-time Docker Compose service"
+	@echo "  make uninstall-systemd Disable and remove boot-time service"
 	@echo "  make dev-api         Run FastAPI locally against Docker Redis"
 	@echo "  make dev-worker      Run Celery worker locally against Docker Redis"
 	@echo "  make dev-frontend    Run Vite locally"
@@ -36,7 +40,7 @@ help:
 	@echo "  make dirs            Create host volume directories (outputs, checkpoints)"
 
 dirs:
-	mkdir -p outputs checkpoints
+	mkdir -p outputs checkpoints uploads
 
 redis-up:
 	$(COMPOSE) up -d redis
@@ -47,14 +51,26 @@ redis-down:
 redis-logs:
 	$(COMPOSE) logs -f redis
 
+docker-build: dirs
+	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) $(COMPOSE) build
+
 docker-up: dirs
-	UID=$(UID) GID=$(GID) $(COMPOSE) up --build
+	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) $(COMPOSE) up --build
+
+docker-start: dirs
+	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) $(COMPOSE) up -d --build
 
 docker-down:
 	$(COMPOSE) down
 
 docker-logs:
 	$(COMPOSE) logs -f
+
+install-systemd:
+	sudo ./scripts/install_systemd_service.sh install
+
+uninstall-systemd:
+	sudo ./scripts/install_systemd_service.sh uninstall
 
 dev-api:
 	CELERY_BROKER_URL=$(REDIS_URL_LOCAL) \

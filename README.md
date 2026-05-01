@@ -415,6 +415,111 @@ export MONAI bundle directories or standalone MONAI tutorial TorchScript files.
 
 ---
 
+## Web App
+
+The inference web app can run fully in Docker Compose, while local development runs the app processes on the host and keeps Redis in Docker.
+
+```bash
+make docker-up
+make docker-down
+make docker-logs
+```
+
+For detached Docker mode:
+
+```bash
+make docker-start
+```
+
+To install Pulmodex as a systemd service that starts the Docker Compose stack at boot:
+
+```bash
+make install-systemd
+```
+
+This writes `/etc/systemd/system/pulmodex.service`, enables it, and starts it. Removing it is:
+
+```bash
+make uninstall-systemd
+```
+
+The production-style API container uses environment-driven worker settings. Adjust the `.env` values below as needed.
+
+Configuration precedence for the web inference stack:
+
+1. `.env` and process environment variables
+2. `configs/experiment/webapp.yaml`
+3. `configs/config.yaml`
+
+In other words, `webapp.yaml` provides web-specific defaults, and `.env` is the final override layer used by the running API and worker processes.
+
+Important `.env` groups:
+
+- Shared runtime:
+  `DEVICE`, `LOG_LEVEL`, `CUDA_VISIBLE_DEVICES`
+- Redis / async backend:
+  `REDIS_URL`, `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`
+- API / worker process settings:
+  `API_WORKERS`, `CELERY_WORKER_CONCURRENCY`, `CELERY_WORKER_LOGLEVEL`
+- Primary detection model:
+  `MODEL_CHECKPOINT`, `MODEL_BACKEND`
+  `MODEL_CHECKPOINT` can point to either a project `.ckpt` file, a MONAI bundle directory, or a MONAI tutorial TorchScript `.pt` file. Set `MODEL_BACKEND=monai_bundle` to force bundle mode, `MODEL_BACKEND=monai_tutorial` to force tutorial TorchScript mode, or `MODEL_BACKEND=native` to force the project-native loader. Leave it at `auto` to use path-based detection.
+- False-positive reduction model:
+  `FP_CHECKPOINT`, `FP_THRESHOLD`
+- Project-native candidate generation knobs:
+  `CANDIDATE_THRESHOLD`, `MIN_CANDIDATE_VOXELS`, `PRIMARY_PATCH_SIZE`
+
+If `MODEL_BACKEND=monai_bundle`, `MODEL_CHECKPOINT` must point at a MONAI bundle directory. The worker uses the bundle's own preprocessing and detection config and then applies the local FP reduction model.
+
+If `MODEL_BACKEND=monai_tutorial`, or if `MODEL_BACKEND=auto` and `MODEL_CHECKPOINT` points at a standalone `.pt` file produced by the MONAI tutorial `luna16_training.py`, the worker loads it as a TorchScript RetinaNet detector using the tutorial's LUNA16 defaults for anchors, score thresholds, and sliding-window patch size.
+
+For local development, start Redis in Docker and run the API, worker, and frontend on the host:
+
+```bash
+make redis-up
+make dev-api
+make dev-worker
+make dev-frontend
+```
+
+Or run everything needed for development in one command:
+
+```bash
+make dev
+```
+
+| Service | URL | Description |
+|---------|-----|-------------|
+| API | http://localhost:8011 | FastAPI — upload scans, poll jobs, fetch slices |
+| Frontend | http://localhost:3000 | React — drag-drop upload, CT viewer, nodule list |
+
+Docker host ports are configurable with `API_HOST_PORT` and `FRONTEND_HOST_PORT` in `.env`. The frontend proxies to the API over the internal Compose network, so changing `API_HOST_PORT` only affects direct host access to the API.
+
+**API endpoints:**
+
+```
+POST /predict                              upload .zip DICOM series → {job_id, seriesuid}
+GET  /status/{job_id}                      poll Celery task state → {state, progress, result, error}
+GET  /slices/{uid}/{view}?idx=N&layer=...  fetch rendered PNG slice layer
+GET  /slices/{uid}/{view}/index            list available slice indices for a view
+GET  /scans                                list all completed scans (scan history), newest first
+DELETE /scans/{uid}                        delete a saved scan and its rendered artefacts
+GET  /report/{uid}                         fetch JSON inference report for a scan
+```
+
+Supported slice layers:
+
+- `layer=composite` renders the combined PNG
+- `layer=base` returns the windowed CT slice with nodule square boxes drawn directly on it
+- `layer=overlay` returns the transparent heatmap (warm yellow-orange overlay with per-pixel alpha from saliency intensity; final opacity controlled client-side)
+
+Upload inputs:
+
+- The frontend and API both only accept `.zip` upload for DICOM series
+- `.zip` uploads are unpacked on the API side; the largest enclosed DICOM series is converted to a temporary `.mhd` before the worker runs
+
+---
+
 ## Tests
 
 ```bash

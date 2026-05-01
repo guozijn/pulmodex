@@ -5,6 +5,16 @@ import UploadZone from "./components/UploadZone";
 import StatusBanner from "./components/StatusBanner";
 
 const API = "/api";
+
+async function parseApiResponse(response) {
+  const contentType = response.headers?.get?.("content-type") ?? "";
+  if (contentType.includes("application/json") || typeof response.text !== "function") {
+    return response.json();
+  }
+
+  const text = await response.text();
+  return { detail: text.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim() };
+}
 const VIEW_NAMES = ["axial", "coronal", "sagittal"];
 
 function candidateProb(candidate) {
@@ -279,9 +289,9 @@ export default function App() {
       const form = new FormData();
       form.append("file", file);
       const res = await fetch(`${API}/predict`, { method: "POST", body: form });
-      const data = await res.json();
+      const data = await parseApiResponse(res);
       if (!res.ok) {
-        throw new Error(data.detail || "Upload failed");
+        throw new Error(data.detail || `Upload failed (${res.status})`);
       }
 
       setJobId(data.job_id);

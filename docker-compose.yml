@@ -14,9 +14,9 @@ services:
     build:
       context: .
       dockerfile: docker/api.Dockerfile
-    user: "${UID}:${GID}"
+    user: "${HOST_UID}:${HOST_GID}"
     ports:
-      - "8010:8010"
+      - "${API_HOST_PORT:-8011}:8010"
     volumes:
       - ./checkpoints:/app/checkpoints:ro
       - ./outputs:/app/outputs
@@ -32,10 +32,12 @@ services:
     build:
       context: .
       dockerfile: docker/worker.Dockerfile
-    user: "${UID}:${GID}"
+    user: "${HOST_UID}:${HOST_GID}"
+    gpus: all
     volumes:
       - ./checkpoints:/app/checkpoints:ro
       - ./outputs:/app/outputs
+      - ./uploads:/app/uploads
     depends_on:
       - redis
 
@@ -45,6 +47,6 @@ services:
       context: webapp
       dockerfile: ../docker/frontend.Dockerfile
     ports:
-      - "3000:80"
+      - "${FRONTEND_HOST_PORT:-3000}:80"
     depends_on:
       - api
